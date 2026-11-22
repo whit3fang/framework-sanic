@@ -7,8 +7,8 @@ when it is an integration project), checks:
    use ``framework_sanic.testing*``). Everything else is internal and may change.
 2. **Plugins load**: every connector / feature entry point in its ``pyproject.toml`` is installed
    and loads; connectors implement the Connector port and build a manifest.
-3. **Wiring**: each feature, and the built-in logging features each connector supports, start
-   with the framework (scopes, required connector ports, settings), using in-memory adapters.
+3. **Wiring**: each feature (listeners included) starts with the integration's connector and the
+   framework (scopes, settings, jobs, routes), using in-memory adapters.
 4. **Contract**: each connector has a test class built on ``ConnectorContract``.
 5. **Tests**: the integration's test suite passes (``--no-tests`` skips it).
 """
@@ -27,7 +27,6 @@ from typing import Any
 
 CONNECTOR_GROUP = "framework_sanic.connectors"
 FEATURE_GROUP = "framework_sanic.features"
-LOGGING_FEATURES = ("call_logging", "sms_logging")
 
 
 def absolute_imports(path: Path) -> list[tuple[int, str]]:
@@ -154,13 +153,13 @@ def check_integration(root: Path, *, run_tests: bool) -> Report:
         except Exception as exc:  # noqa: BLE001
             report.fail(f"connector {name!r}: {type(exc).__name__}: {exc}")
             continue
-        supported = [f for f in LOGGING_FEATURES if _starts(name, f) is None]
-        report.note(f"connector {name!r}: supports {', '.join(supported) or 'none of the logging features'}")
     for name in loadable[FEATURE_GROUP]:
         with_connector = next(iter(loadable[CONNECTOR_GROUP]), "fake")
         error = _starts(with_connector, name)
         if error:
             report.fail(f"feature {name!r} does not start with connector {with_connector!r}: {error}")
+        else:
+            report.note(f"feature {name!r}: starts with connector {with_connector!r}")
 
     # 4. contract suite
     if connectors:

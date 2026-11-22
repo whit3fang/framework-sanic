@@ -60,7 +60,7 @@ def make_settings(**overrides: Any) -> Settings:
         "WORKER_CONCURRENCY": 16,
         "PER_COMPANY_CONCURRENCY": 4,
         "UI_RATE_LIMIT_PER_MINUTE": 60,
-        "FEATURES": "call_logging,sms_logging",
+        "FEATURES": "fake.calls,fake.sms,fake.notes",
     }
     base.update(overrides)
     return Settings(**base)
@@ -212,3 +212,16 @@ def sms_event(
     }
     payload.update(extra)
     return payload
+
+
+async def start_harness(connector: Any = None, *, connect: bool = True, **settings: Any) -> Harness:
+    """A started harness (features set up, workers ready), with the company connected by default.
+    For tests that need settings the ``harness`` fixture does not give, e.g.
+    ``await start_harness(my_connector, FEATURES="acme.calls", ACME_CALLS_SKIP_STATES="missed")``."""
+    from framework_sanic.bootstrap import startup
+
+    h = build_harness(connector=connector, **settings)
+    await startup(h.services, schedules=False)
+    if connect:
+        await h.connect_company()
+    return h

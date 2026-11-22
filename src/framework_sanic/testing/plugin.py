@@ -8,7 +8,7 @@ Integrations customise it by overriding two fixtures in their ``conftest.py``::
 
     @pytest.fixture
     def harness_settings() -> dict[str, Any]:
-        return {"FEATURES": "call_logging,acme.tickets"}
+        return {"FEATURES": "acme.calls,acme.tickets"}
 """
 
 from __future__ import annotations

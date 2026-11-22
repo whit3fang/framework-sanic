@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,3 +29,9 @@ def hubspot(api: FakeHubSpot) -> HubSpotConnector:
 def harness_connector(hubspot: HubSpotConnector) -> HubSpotConnector:
     """Run the framework harness with HubSpot (against the in-memory API) instead of the fake CRM."""
     return hubspot
+
+
+@pytest.fixture
+def harness_settings() -> dict[str, Any]:
+    """... with HubSpot's listeners."""
+    return {"FEATURES": "hubspot.calls,hubspot.sms,hubspot.notes"}

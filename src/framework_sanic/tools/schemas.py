@@ -22,10 +22,14 @@ def _collect_routes() -> list[RouteSpec]:
     router = Router()
     for module in CORE_ROUTE_MODULES:
         router.add_module(module)
-    # Routes of shared features the UI can use when they are enabled (it checks session.features).
-    from framework_sanic.features.call_logging import notes
+    # POST /notes, present when a NoteListener is enabled (the UI checks session.notes).
+    from framework_sanic.listeners.base import notes_route
+    from framework_sanic.listeners.models import NoteIn, NoteOut
 
-    router.add_module(notes)
+    async def unused(principal: object, note: NoteIn) -> NoteOut:
+        raise NotImplementedError
+
+    router.add(notes_route(unused))
     return router.routes
 
 

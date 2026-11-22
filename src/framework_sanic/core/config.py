@@ -49,8 +49,6 @@ class Settings(BaseSettings):
     CONNECTOR: str = "fake"
     FEATURES: str = ""
     CONNECTOR_RATE_LIMIT_PER_MINUTE: int = 600
-    # VERIFY: default behaviour for unknown callers.
-    UNKNOWN_CALLER_POLICY: Literal["log_unassociated", "create_contact", "skip"] = "log_unassociated"
 
     # --- Infrastructure --------------------------------------------------------------------
     # "memory" | "sqlalchemy" | "datastore", or "package.module:factory" for your own adapter:
@@ -66,7 +64,6 @@ class Settings(BaseSettings):
     KMS_KEY: str = ""  # projects/.../cryptoKeys/...; empty = local key provider
     LOCAL_MASTER_KEY: SecretStr = SecretStr("ZGV2LWxvY2FsLW1hc3Rlci1rZXktMzItYnl0ZXMhIQ==")
     SHARD_COUNT: int = 8
-    ACTIVITY_TTL_DAYS: int = 90
     # Expired records are hidden on read immediately; this deletes them physically.
     PURGE_INTERVAL_SECONDS: float = 3600.0
     PURGE_BATCH_SIZE: int = 1000
@@ -119,10 +116,6 @@ class Settings(BaseSettings):
     @cached_property
     def changelog_lifecycle_actions(self) -> list[str]:
         return _csv(self.CHANGELOG_LIFECYCLE_ACTIONS)
-
-    @property
-    def activity_ttl_seconds(self) -> float:
-        return self.ACTIVITY_TTL_DAYS * 86400.0
 
 
 class PluginSettings(BaseSettings):

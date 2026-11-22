@@ -16,8 +16,8 @@ let stopListening: (() => void) | undefined;
 
 const ref_ = computed(() => (store.call ? dialpadRef(store.call) : null));
 const ready = computed(() => store.session?.state === "ready");
-// Notes belong to the call_logging feature; the panel is shown only when it is enabled.
-const notesEnabled = computed(() => store.session?.features.includes("call_logging") ?? false);
+// The notes panel is shown only when the integration has a note listener.
+const notesEnabled = computed(() => store.session?.notes ?? false);
 
 const contact = useQuery({
   queryKey: computed(() => ["contact", ref_.value]),

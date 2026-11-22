@@ -1,8 +1,7 @@
 """In-memory fake connector (a stub CRM) for tests, local development and the docker-compose harness.
 
-Implements the base Connector plus the CallLogger (call_logging) and SmsLogger (sms_logging) ports. It deliberately does not
-deduplicate on its own: call_logging stage 2 must use ``find_by_reference`` so that
-duplicate deliveries never create a second external record.
+Implements the ``Connector`` port: contacts (seeded in memory), matching by phone, auth and error
+mapping. What happens to Dialpad activity is up to listeners (see ``stubs/listeners.py``).
 """
 
 from __future__ import annotations
@@ -10,8 +9,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import secrets
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import urlencode
 
 from framework_sanic.core.domain.entities import EntityMap
@@ -30,8 +28,6 @@ from framework_sanic.core.ports.connector import (
 from framework_sanic.core.ports.platform import OAuthTokens
 from framework_sanic.core.services.matching import match_by_phone
 from framework_sanic.core.services.phone import digits
-from framework_sanic.features.call_logging.models import CallActivity, Note
-from framework_sanic.features.sms_logging.models import SmsLog
 
 
 class FakeHTTPError(Exception):
@@ -62,15 +58,6 @@ class FakeAuth:
         )
 
 
-@dataclass
-class FakeRecord:
-    ref: EntityMap
-    properties: dict[str, Any]
-    reference: str | None = None
-    recordings: list[str] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
-
-
 class FakeConnector:
     name = "fake"
 
@@ -78,7 +65,6 @@ class FakeConnector:
         self.auth: ConnectorAuth = FakeAuth()
         self.capabilities = {"calls", "sms", "recordings", "notes", "create_contact"}
         self.contacts: dict[str, Entity] = {}
-        self.records: dict[str, FakeRecord] = {}  # id -> record (calls, sms)
         self.calls_made: list[str] = []
         self.fail_next: list[Exception] = []
         self.latency = latency
@@ -152,69 +138,6 @@ class FakeConnector:
             props.get("email"),
         )
 
-    def _create(self, object_type: str, reference: str, props: dict[str, Any]) -> EntityMap:
-        ref = EntityMap(
-            dialpad_id=reference, external_type=object_type, external_id=f"{object_type}-{next(self._ids)}"
-        )
-        self.records[ref.external_id] = FakeRecord(ref=ref, properties=props, reference=reference)
-        return ref
-
-    async def upsert_call(
-        self, cred: ConnectorCredential, activity: CallActivity, existing: EntityMap | None
-    ) -> EntityMap:
-        await self._op("upsert_call")
-        props = {
-            "state": activity.state,
-            "direction": activity.direction,
-            "duration_ms": activity.duration_ms,
-            "external_number": activity.external_number,
-            "owner": activity.owner_user_id,
-            "contact": activity.contact.external_id if activity.contact else None,
-            "recordings": list(activity.recording_urls),
-        }
-        if existing and existing.external_id in self.records:
-            self.records[existing.external_id].properties.update(props)
-            return existing
-        return self._create("call", activity.activity_key, props)
-
-    async def log_sms(self, cred: ConnectorCredential, activity: SmsLog) -> EntityMap:
-        await self._op("log_sms")
-        act = activity.activity
-        return self._create(
-            "sms",
-            act.activity_key,
-            {
-                "direction": act.direction,
-                "text": activity.text,
-                "contact": act.contact.external_id if act.contact else None,
-            },
-        )
-
-    async def attach_recording(self, cred: ConnectorCredential, call: EntityMap, url: str) -> None:
-        await self._op("attach_recording")
-        rec = self.records[call.external_id]
-        if url not in rec.recordings:
-            rec.recordings.append(url)
-
-    async def add_note(self, cred: ConnectorCredential, call: EntityMap, note: Note) -> EntityMap:
-        await self._op("add_note")
-        rec = self.records[call.external_id]
-        marker = f"{note.note_id}:{note.body}"
-        if marker not in rec.notes:
-            rec.notes.append(marker)
-        return EntityMap(
-            dialpad_id=note.activity_key,
-            external_type="note",
-            external_id=f"{call.external_id}:{note.note_id}",
-        )
-
-    async def find_by_reference(self, cred: ConnectorCredential, activity_key: str) -> EntityMap | None:
-        await self._op("find_by_reference")
-        for rec in self.records.values():
-            if rec.reference == activity_key:
-                return rec.ref
-        return None
-
     def map_error(self, exc: Exception) -> ConnectorError:
         if isinstance(exc, ConnectorError):
             return exc
@@ -231,7 +154,3 @@ class FakeConnector:
         if isinstance(exc, (TimeoutError, ConnectionError)):
             return ConnectorError("transient", str(exc))
         return ConnectorError("transient", repr(exc))
-
-    # test helpers
-    def records_for(self, object_type: str) -> list[FakeRecord]:
-        return [r for r in self.records.values() if r.ref.external_type == object_type]

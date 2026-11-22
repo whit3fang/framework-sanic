@@ -1,8 +1,7 @@
 """framework_sanic.sdk: the public API for integrations (connectors and features).
 
-Integration code imports from here (and from ``framework_sanic.sdk.call_logging`` /
-``framework_sanic.sdk.sms_logging`` for those features' ports and models, and
-``framework_sanic.testing`` in tests) and nothing else from the framework: ``framework-sanic check``
+Integration code imports from here (and ``framework_sanic.testing`` in tests) and nothing else
+from the framework: ``framework-sanic check``
 and ``tests/unit/test_sdk.py`` enforce it. Everything outside the SDK is internal and may change
 without notice; names here follow semantic versioning once the framework is published as a
 package, with a deprecation warning for at least one minor release before removal.
@@ -13,7 +12,11 @@ Plugins are found through entry points in the integration's ``pyproject.toml``::
     acme = "acme_integration.connector:make"          # make(settings) -> Connector
 
     [project.entry-points."framework_sanic.features"]
+    "acme.calls" = "acme_integration.listeners.calls:feature"   # a CallListener
     "acme.tickets" = "acme_integration.features.tickets:feature"
+
+Dialpad activity reaches the integration through listeners (``CallListener``, ``SmsListener``,
+``NoteListener``); what happens to it is entirely the integration's.
 """
 
 from __future__ import annotations
@@ -58,8 +61,25 @@ from framework_sanic.core.services.outbox import publish_and_clear
 from framework_sanic.core.services.phone import phone_variants, to_e164
 from framework_sanic.core.services.session_service import Principal
 from framework_sanic.http.routes import RequestContext, route
+from framework_sanic.listeners import (
+    CallActivity,
+    CallListener,
+    NoteIn,
+    NoteListener,
+    NoteOut,
+    SmsActivity,
+    SmsListener,
+)
 
 __all__ = [
+    # listeners: where Dialpad activity arrives
+    "CallActivity",
+    "CallListener",
+    "NoteIn",
+    "NoteListener",
+    "NoteOut",
+    "SmsActivity",
+    "SmsListener",
     # features
     "ACK",
     "TOPIC_CONTROL",

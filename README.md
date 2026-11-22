@@ -6,10 +6,12 @@ buffer-first intake, durable fair delivery) **and hands them to integration feat
 event means for a given integration is the feature's business logic. It also serves an embedded
 Vue 3 UI that shows the matched external contact and lets the user rematch it.
 
-Two independent opt-in reference features ship with it: `call_logging` logs calls as activities
-in the external service (one activity per call leg) and adds call notes; `sms_logging` logs SMS.
-Enable either or both (`FEATURES=call_logging,sms_logging`) and tune them with settings
-(`CALL_LOGGING_*`, `SMS_LOGGING_*`).
+**Integrations decide what happens to Dialpad activity.** The framework delivers calls, SMS and
+contact-card notes to the integration's *listeners* (`CallListener`, `SmsListener`,
+`NoteListener`) together with plain activity models (`CallActivity`, `SmsActivity`); whether a
+call becomes a CRM activity, a ticket update or nothing is the listener's code. HubSpot's
+listeners (`integrations/hubspot/.../listeners/`) are a complete example: call fold, sync,
+recordings, SMS and notes.
 
 **Integrations are packages.** Each one (`integrations/<name>/`, a uv workspace member) has its
 own `pyproject.toml`, registers its connector and features through entry points, imports only the
@@ -38,7 +40,8 @@ src/framework_sanic/
                         company_service, outbox, rate_limit, crypto, phone
     features/           FeatureContext + registry (entry-point discovery), job results, SyncGuards;
                         platform (always on: reconcile, sweep, change log, outbox relay, purge)
-  features/             shared opt-in features: call_logging (fold, sync, notes, policy), sms_logging
+  listeners/            CallListener / SmsListener / NoteListener base classes + CallActivity, SmsActivity,
+                        NoteIn/NoteOut: where integrations receive Dialpad activity
   connectors/rest.py    RestConnector + OAuth2Auth: the toolkit HTTP/JSON connectors are built on
   adapters/             dialpad (REST client, webhook + id_token verifiers), storage (memory,
                         sqlalchemy, datastore), queue (memory, pubsub), cache (memory, redis),
@@ -47,7 +50,8 @@ src/framework_sanic/
     adapters/sanic.py   the only module that imports sanic (also serves the packaged UI at /app/)
   stubs/                fakes for tests + local dev, never imported by production code (lint-enforced):
                         dialpad (FakeDialpadPlatform), dialpad_tokens (dev id_tokens),
-                        connector (FakeConnector + fake.dev_harness feature)
+                        connector (FakeConnector + fake.dev_harness feature),
+                        listeners (fake.calls / fake.sms / fake.notes: record what was delivered)
   testing/              test kit (`testing` extra): harness + pytest plugin, connector and repository
                         contract suites, cassette record/replay
   tools/                CLI tools: new (scaffold), dev, replay (fake Dialpad driver), check, schemas
@@ -75,22 +79,24 @@ are created only for event kinds some enabled feature handles. Toolkit for handl
 repository upserts, the transactional outbox (+ relay), `SyncGuards` (parking, credentials,
 rate budgets, leases, connector error mapping).
 
-**`call_logging` (opt-in business logic).** Stage 1 folds call events into `CallActivity`
-(order-independent max-rank fold; terminal states never regress; recordings merge additively)
-and writes an outbox entry in the same UnitOfWork. Stage 2 syncs to the connector through the
-`CallLogger` port with `find_by_reference` idempotency, then attaches recordings and notes.
-
-**`sms_logging` (opt-in business logic).** Inserts `SmsActivity` once (skipped if the first
-status seen is failed), then a sync job decrypts the text transiently and logs it through the
-`SmsLogger` port. The text is never stored.
+**Listeners (integration code).** Each call / SMS event is delivered to every enabled listener of
+that kind; `POST /notes` (the contact card's notes panel, shown when a `NoteListener` is enabled)
+goes to the note listener, and the framework stores no note. What a listener does is up to the
+integration. HubSpot's, for example: the call listener folds events into one record
+(order-independent; terminal states never regress) with an outbox entry in the same unit of work,
+then a sync job matches the contact and creates or updates the HubSpot call
+(`find_by_reference` first, so retries never duplicate); the SMS listener stores metadata once
+and sends the transiently decrypted text; the note listener queues a job that waits for the call
+to be logged.
 
 **UI path.** iframe → Vue app → HTTP layer (`id_token` → in-memory session token) → connector live
 reads with the acting user's credential.
 
 ## Building an integration
 
-An integration is a connector (how to talk to the external system) plus, when the built-in
-features do not fit, its own features (what to do with Dialpad events). The workflow:
+An integration is a connector (how to talk to the external system and match contacts) plus
+listeners (what to do with Dialpad calls, SMS and notes), and optionally other features. The
+workflow:
 
 ```bash
 uv run framework-sanic new zendesk --feature tickets   # integrations/zendesk, joined to the workspace
@@ -99,9 +105,9 @@ uv run framework-sanic check integrations/zendesk      # the gate; failing contr
 uv run framework-sanic dev --connector zendesk         # run it locally (fake Dialpad, your connector)
 ```
 
-`new` generates a package with entry points, a `RestConnector` skeleton implementing the
-`call_logging` and `sms_logging` ports, an in-memory fake of the external API, the connector
-contract suite wired to it, and (with `--feature`) feature skeletons with a harness test.
+`new` generates a package with entry points, a `RestConnector` skeleton, call / SMS / note
+listener skeletons with a harness test, an in-memory fake of the external API, the connector
+contract suite wired to it, and (with `--feature`) extra feature skeletons.
 
 ### Connectors
 
@@ -116,13 +122,10 @@ bearer-authenticated `get/post/put/patch/delete`, one quick retry of idempotent 
    integration's rule for which contact a Dialpad caller is (`Caller` → `ContactMatch`), used by
    the contact card and when calls/SMS are logged. `match_by_phone` from the SDK is a simple
    starting point.
-2. The ports of the features it supports; a feature refuses to start with a connector lacking it:
-   - `call_logging` → `CallLogger` (`framework_sanic.sdk.call_logging`): `upsert_call`,
-     `attach_recording`, `add_note`, `find_by_reference`.
-   - `sms_logging` → `SmsLogger` (`framework_sanic.sdk.sms_logging`): `log_sms`, `find_by_reference`.
-
-   Idempotency: store the activity key (`activity.activity_key`) on the external record and make
-   `find_by_reference` find it; the features always call it before creating.
+2. Whatever methods its own listeners need (HubSpot: `upsert_call`, `attach_recording`,
+   `add_note`, `log_sms`, `find_by_reference`). The framework does not define them. Tip: store
+   the activity key (`activity.activity_key`) on every record you create and look it up before
+   creating, so redelivered events never duplicate records.
 
    **`EntityMap`** is how Dialpad objects and external records are tied together, and the only
    reference type connectors see: `dialpad_id` → `external_type` + `external_id` (types are the
@@ -131,24 +134,38 @@ bearer-authenticated `get/post/put/patch/delete`, one quick retry of idempotent 
    - **contacts** (`dialpad_id` = `contact:<id>` or `phone:<number>`): the first match from
      `match_contact` is stored and reused; a rematch replaces it (both are treated the same). A
      stored contact the CRM no longer has (`not_found`) is dropped and matched again.
-   - **logged records** (`dialpad_id` = the activity key): what `upsert_call`, `log_sms`,
-     `add_note` and `find_by_reference` return. `upsert_call` receives the stored map as
-     `existing` to update instead of create; `attach_recording`/`add_note` receive the call's.
+   - **logged records** (`dialpad_id` = an activity key): listeners save what they created with
+     `services.entity_maps.save(company_id, entity_map)` and read it back with `get`.
 
-   Activities keep a copy of the contact map they were logged with (`activity.contact`), so a
-   rematch only affects future activities. Search and match results (`Entity`) carry
-   `external_id` and `external_type` directly.
+   `services.contacts.resolve_for_activity` / `resolve_or_create` give a listener the caller's
+   contact map (stored, else matched and stored). Keep a copy on the activity you log (HubSpot:
+   `LoggedCall.contact`) if a later rematch must not change it. Search and match results
+   (`Entity`) carry `external_id` and `external_type` directly.
 3. Its own settings: a `PluginSettings` subclass with an env prefix (`HUBSPOT_*`), loaded with
    `load_settings` in the entry-point factory `make(settings) -> Connector`.
-4. Optional hooks for the built-in features: `should_log_call(activity)` (`CallLogFilter`) and
-   `should_log_sms(activity)` (`SmsLogFilter`) for rules the settings cannot express.
 
 Register it in the package's `pyproject.toml` (`[project.entry-points."framework_sanic.connectors"]
 name = "pkg:make"`) and select it with `CONNECTOR=name`.
 
+### Listeners
+
+Listeners are where an integration receives Dialpad activity (`framework_sanic.sdk`):
+
+| Base class | Override | Receives |
+|---|---|---|
+| `CallListener` | `on_call(event) -> JobResult` | every call event (`event.call`); `CallActivity.from_event(event.call, company_id=...)` gives a plain record |
+| `SmsListener` | `on_sms(event) -> JobResult` | every SMS event (`event.sms`, `await event.sms_text()`); `SmsActivity.from_event(...)` |
+| `NoteListener` | `on_note(principal, note: NoteIn) -> NoteOut` | `POST /notes` from the contact card (the notes panel appears when one is enabled) |
+
+Set `name` (`"<integration>.calls"`), optionally `scopes`, and do your own wiring in
+`configure(ctx)` (settings, follow-up jobs, `declare_company_data`). Subclass the models to add
+your bookkeeping (HubSpot: `LoggedCall(CallActivity)`). Expose `feature = MyCalls()`, register it
+as an entry point like any feature, and enable it with `FEATURES=acme.calls,acme.sms,acme.notes`.
+Delivery is at least once: make handlers idempotent.
+
 ### Features
 
-Features are where integration business logic lives; the framework only delivers events to them.
+Listeners are features; any other integration logic is a feature too.
 Expose `feature = MyFeature()` with a `name` and `setup(ctx: FeatureContext)`, register it under
 `[project.entry-points."framework_sanic.features"]` (`"<integration>.<feature>" = "pkg.module:feature"`)
 and enable it with `FEATURES=`. In `setup`:
@@ -186,8 +203,8 @@ The test kit (`framework_sanic.testing`) gives every integration the same tools 
 
 Run on every integration (CI does), it checks the **SDK boundary** (integration code imports only
 `framework_sanic.sdk`, tests also `framework_sanic.testing`), that **entry points** are installed
-and load, that the **wiring** starts (each feature, and the logging features each connector
-supports, with scopes and ports validated), that a **contract suite** exists, and that the
+and load, that the **wiring** starts (each feature and listener with the integration's connector, scopes
+validated), that a **contract suite** exists, and that the
 **tests** pass. It also works outside this repository, against an installed framework.
 
 ### Moving to a published package later
@@ -269,9 +286,9 @@ uv run framework-sanic check               # every integration: SDK boundary, pl
 | 3 HTTP layer | `tests/http_contract/` (runs against every HTTP adapter) |
 | 4 Dialpad auth | `tests/integration/test_dialpad_auth.py` |
 | 5 accept path + delivery | `tests/integration/test_accept_path.py`, `tests/integration/test_event_delivery.py` (framework/feature boundary) |
-| 6 call_logging stage 1 merge | `tests/property/test_call_fold.py`, `tests/integration/test_stage1.py` |
+| 6 call fold (HubSpot listener) | `integrations/hubspot/tests/test_hubspot_fold.py`, `test_hubspot_listeners.py` |
 | 7 reconciler | `tests/integration/test_reconciler.py` |
-| 8 connector + call_logging stage 2 | `framework_sanic.testing.connector_contract` on the fake CRM (`tests/contract/test_connector_contract.py`) and every integration, `tests/integration/test_stage2.py`, `tests/integration/test_logging_options.py` |
+| 8 connector + listener sync | `framework_sanic.testing.connector_contract` on the fake CRM (`tests/contract/test_connector_contract.py`) and every integration, `tests/integration/test_sync_guards.py`, `integrations/hubspot/tests/test_hubspot_listeners.py` |
 | 9 fairness | `tests/integration/test_fairness.py` |
 | 10 UI | `ui/` → `pnpm install && pnpm test && pnpm e2e` |
 | 11 HubSpot | `integrations/hubspot/tests` (contract against a HubSpot API mock + end to end through the harness); sandbox verification still to do |
@@ -332,17 +349,13 @@ All settings come from env / `.env` locally and terraform in beta/production
 | `DIALPAD_CALL_STATES` | `hangup,missed,voicemail,recording` | call subscription states (VERIFY) |
 | `LOGGABLE_TARGET_TYPES` | `user,department,callcenter` | target types that get subscriptions |
 | `CONNECTOR` | `fake` | an installed connector (`framework_sanic.connectors` entry point: `fake`, `hubspot`, ...) or `package.module:factory` |
-| `FEATURES` | empty | features to enable (`framework_sanic.features` entry points or module paths), e.g. `call_logging,sms_logging,hubspot.sms_campaign`. Without a feature that handles events nothing is subscribed or processed (a warning is logged). `platform` is always on |
-| `CALL_LOGGING_DIRECTIONS`, `CALL_LOGGING_SKIP_STATES` | `inbound,outbound`, empty | which calls `call_logging` logs (e.g. skip `missed,voicemail`) |
-| `CALL_LOGGING_MIN_DURATION_SECONDS`, `CALL_LOGGING_RECORDINGS` | `0`, `true` | skip short completed calls; attach recording links |
-| `SMS_LOGGING_DIRECTIONS`, `SMS_LOGGING_INCLUDE_TEXT` | `inbound,outbound`, `true` | which SMS `sms_logging` logs; `false` logs them without the text (never decrypted) |
+| `FEATURES` | empty | features to enable (`framework_sanic.features` entry points or module paths), e.g. `hubspot.calls,hubspot.sms,hubspot.notes`. Without a listener nothing is subscribed or processed (a warning is logged). `platform` is always on |
 | connector settings | | owned by each integration with its own prefix, e.g. `HUBSPOT_*` (see `integrations/hubspot/README.md`) |
 | `STORAGE_ADAPTER` | `memory` | `memory`, `sqlalchemy` (`DATABASE_URL`; `[sql]` extra), `datastore` (`DATASTORE_PROJECT`; `[gcp]`), or `package.module:factory` for your own adapter (see below). Anything else fails at startup |
 | `QUEUE_ADAPTER` | `memory` | `memory` or `pubsub` (`PUBSUB_PROJECT`, `PUBSUB_PREFIX`; `[gcp]`) |
 | `CACHE_URL` | `memory://` | `redis://…` (`[redis]`) for local dev and real deployments; tests use `memory://` |
 | `KMS_KEY` | empty | GCP KMS key name (`[gcp]`); empty = local key (`LOCAL_MASTER_KEY`) |
 | `SHARD_COUNT` | `8` | queue shards (company hash) |
-| `ACTIVITY_TTL_DAYS` | `90` | TTL of call/SMS activity records |
 | `PURGE_INTERVAL_SECONDS`, `PURGE_BATCH_SIZE`, `PURGE_MAX_BATCHES` | `3600`, `1000`, `50` | how often and how much the platform feature physically deletes expired records (they are hidden on read immediately) |
 | `CHANGELOG_LIFECYCLE_ACTIONS` | `target_created,target_deleted` | change-log actions that trigger a reconcile |
 | `PLATFORM_ADAPTER` | `dialpad` | `fake` for the local harness |
@@ -352,7 +365,6 @@ All settings come from env / `.env` locally and terraform in beta/production
 | `DIALPAD_RATE_LIMIT_PER_MINUTE` | `1200` | per-company Dialpad API budget (shared by reconciler and UI) |
 | `CONNECTOR_RATE_LIMIT_PER_MINUTE` | `600` | per-company connector budget |
 | `PER_COMPANY_CONCURRENCY`, `WORKER_CONCURRENCY` | `4`, `32` | fairness caps per worker pool |
-| `UNKNOWN_CALLER_POLICY` | `log_unassociated` | VERIFY |
 | `EMBEDDED_WORKERS` | `true` | run workers inside the HTTP process (local); run `framework-sanic worker` separately in prod |
 | `SERVE_UI_DIR` | unset | directory of a built UI to serve at `/app/`; default: the build shipped in the package, when present (VERIFY hosting) |
 
@@ -404,6 +416,6 @@ contract. Built in: `memory` (tests), `sqlalchemy` (SQLite/PostgreSQL) and `data
 - SMS text is never stored: it is encrypted (envelope encryption, KMS-wrapped DEK) inside the
   queue message and dropped after sync. Call transcripts are dropped at parse time.
 - Tokens are encrypted at rest through the `KeyProvider`; Redis never holds refresh tokens.
-- Call and SMS activity records expire after `ACTIVITY_TTL_DAYS`; `POST /admin/uninstall`
+- Activity records a listener stores expire when it sets `expires_at` (HubSpot: `HUBSPOT_CALLS_RETENTION_DAYS` / `HUBSPOT_SMS_RETENTION_DAYS`); `POST /admin/uninstall`
   deletes all company data, including every kind enabled features declared; connects, disconnects, config changes and deletions go to the audit log (kept).
 - CSP `frame-ancestors` restricts embedding to Dialpad origins.

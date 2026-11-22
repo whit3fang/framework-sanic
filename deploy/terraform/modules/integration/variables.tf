@@ -30,7 +30,7 @@ variable "connector" {
 
 variable "features" {
   type        = list(string)
-  description = "FEATURES entry-point names, e.g. [\"call_logging\", \"sms_logging\"]."
+  description = "FEATURES entry-point names, e.g. [\"hubspot.calls\", \"hubspot.sms\", \"hubspot.notes\"]."
 }
 
 variable "kms_key" {

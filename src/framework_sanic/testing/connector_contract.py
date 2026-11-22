@@ -1,7 +1,7 @@
 """Reusable connector contract suite: what every connector must do for the framework to work.
 
-Subclass ``ConnectorContract`` and provide the backend. Two fixtures are required and three
-unlock stricter checks::
+Subclass ``ConnectorContract`` and provide the backend. Two fixtures are required and one
+unlocks stricter checks::
 
     from framework_sanic.testing.connector_contract import ConnectorContract
 
@@ -15,15 +15,11 @@ unlock stricter checks::
             return acme_api.add_contact
 
         @pytest.fixture
-        def record_count(self, acme_api) -> RecordCount:    # optional: no-duplicates checks
-            return acme_api.count                          # ("call" | "note" | "sms") -> int
-
-        @pytest.fixture
         def fail_with(self, acme_api) -> FailWith:          # optional: error-mapping checks
             return acme_api.fail_with                      # (status, retry_after) -> None
 
-Feature ports are checked when the connector implements them: ``CallLogger`` (call_logging) and
-``SmsLogger`` (sms_logging); the tests for a port it does not implement are skipped.
+What the connector writes for Dialpad activity is the integration's own design (its listeners
+call it), so it is tested by the integration's own tests, not by this suite.
 
 The backend can be an in-memory fake of the API (fast, for CI), a recorded sandbox
 (``framework_sanic.testing.recording``) or a real sandbox account.
@@ -33,7 +29,6 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
 
 import pytest
 
@@ -48,13 +43,8 @@ from framework_sanic.core.ports.connector import (
 )
 from framework_sanic.core.ports.platform import OAuthTokens
 from framework_sanic.core.services.phone import phone_variants
-from framework_sanic.features.call_logging.models import CallActivity, Note
-from framework_sanic.features.call_logging.port import CallLogger
-from framework_sanic.features.sms_logging.models import SmsActivity, SmsLog
-from framework_sanic.features.sms_logging.port import SmsLogger
 
 SeedContact = Callable[[str, str], str | Awaitable[str]]  # (name, phone) -> external contact id
-RecordCount = Callable[[Literal["call", "note", "sms"]], int]
 # Make the backend answer every following request with this HTTP status (and Retry-After), so
 # the check holds whatever retries the connector does internally.
 FailWith = Callable[[int, float | None], None]
@@ -62,40 +52,9 @@ FailWith = Callable[[int, float | None], None]
 PHONE = "+14155550100"
 
 
-def contract_call(call_id: str = "9", **kw: Any) -> CallActivity:
-    """A terminal inbound call as ``call_logging`` hands it to ``upsert_call``."""
-    return CallActivity(
-        company_id="c1",
-        call_id=call_id,
-        state="hangup",
-        terminal=True,
-        direction="inbound",
-        external_number=PHONE,
-        internal_number="+14155550199",
-        duration_ms=61_000,
-        started_at=1_700_000_000_000,
-        **kw,
-    )
-
-
 def contact_map(contact_id: str, dialpad_id: str = f"phone:{PHONE}") -> EntityMap:
     """A stored contact map, as the framework passes it to ``get_entity`` and on activities."""
     return EntityMap(dialpad_id=dialpad_id, external_type="contact", external_id=contact_id)
-
-
-def same_record(a: EntityMap | None, b: EntityMap | None) -> bool:
-    """Two maps point at the same external record (bookkeeping fields aside)."""
-    return (
-        a is not None
-        and b is not None
-        and (a.external_type, a.external_id) == (b.external_type, b.external_id)
-    )
-
-
-def contract_note(note_id: str = "note-00001", call_id: str = "9") -> Note:
-    return Note(
-        company_id="c1", note_id=note_id, call_id=call_id, author_user_id="u", body="hi", created_at=1.0
-    )
 
 
 class ConnectorContract:
@@ -114,10 +73,6 @@ class ConnectorContract:
         return ConnectorCredential(
             scope="company", tokens=OAuthTokens(access_token="tok", refresh_token="rt", expires_in=3600)
         )
-
-    @pytest.fixture
-    def record_count(self) -> RecordCount | None:
-        return None
 
     @pytest.fixture
     def fail_with(self) -> FailWith | None:
@@ -218,64 +173,3 @@ class ConnectorContract:
             assert mapped.kind == kind, f"HTTP {status} mapped to {mapped.kind}, expected {kind}"
             if kind == "rate_limited":
                 assert mapped.retry_after == 7.0, "429 must honour Retry-After"
-
-    # --- CallLogger (call_logging) ----------------------------------------------------------
-    @pytest.mark.asyncio
-    async def test_call_logging_is_idempotent(
-        self,
-        connector: Connector,
-        seed_contact: SeedContact,
-        credential: ConnectorCredential,
-        record_count: RecordCount | None,
-    ) -> None:
-        if not isinstance(connector, CallLogger):
-            pytest.skip("connector does not implement CallLogger")
-        contact = await self._seed(seed_contact, "Ada", PHONE)
-        act = contract_call(contact=contact_map(contact))
-        assert await connector.find_by_reference(credential, act.activity_key) is None
-        logged = await connector.upsert_call(credential, act, None)
-        assert logged.dialpad_id == act.activity_key, "the returned map's dialpad_id is the activity key"
-        assert same_record(await connector.find_by_reference(credential, act.activity_key), logged), (
-            "find_by_reference must find the record by its activity key (retries rely on it)"
-        )
-        updated = act.model_copy(update={"duration_ms": 99_000})
-        again = await connector.upsert_call(credential, updated, logged)
-        assert same_record(again, logged), "an update must keep the record"
-        if record_count is not None:
-            assert record_count("call") == 1
-
-    @pytest.mark.asyncio
-    async def test_call_recordings_and_notes(
-        self,
-        connector: Connector,
-        credential: ConnectorCredential,
-        record_count: RecordCount | None,
-    ) -> None:
-        if not isinstance(connector, CallLogger):
-            pytest.skip("connector does not implement CallLogger")
-        call = await connector.upsert_call(credential, contract_call("10"), None)
-        if "recordings" in connector.capabilities:
-            await connector.attach_recording(credential, call, "https://dialpad.example/rec/1")
-            await connector.attach_recording(credential, call, "https://dialpad.example/rec/1")
-        if "notes" in connector.capabilities:
-            note = contract_note(call_id="10")
-            first = await connector.add_note(credential, call, note)
-            assert first.dialpad_id == note.activity_key
-            again = await connector.add_note(credential, call, note)  # duplicate delivery
-            assert same_record(again, first), "a redelivered note maps to the same record"
-            if record_count is not None:
-                assert record_count("note") <= 1, "a redelivered note must not be added twice"
-
-    # --- SmsLogger (sms_logging) ------------------------------------------------------------
-    @pytest.mark.asyncio
-    async def test_sms_logging_reference(
-        self, connector: Connector, credential: ConnectorCredential, record_count: RecordCount | None
-    ) -> None:
-        if not isinstance(connector, SmsLogger):
-            pytest.skip("connector does not implement SmsLogger")
-        act = SmsActivity(company_id="c1", sms_id=77, direction="inbound", from_number=PHONE)
-        logged = await connector.log_sms(credential, SmsLog(activity=act, text="hello"))
-        assert logged.dialpad_id == act.activity_key
-        assert same_record(await connector.find_by_reference(credential, act.activity_key), logged)
-        if record_count is not None:
-            assert record_count("sms") == 1

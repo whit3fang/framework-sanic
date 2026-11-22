@@ -10,9 +10,8 @@ import datetime as dt
 from typing import Any
 
 from framework_sanic.sdk import ConnectorCredential, Entity
-from framework_sanic.sdk.call_logging import CallActivity, Note
-from framework_sanic.sdk.sms_logging import SmsLog
 
+from .activities import CallNote, LoggedCall, LoggedSms
 from .crm import HubSpotObject
 
 REFERENCE_PROPERTY = "dialpad_activity_key"
@@ -54,7 +53,7 @@ def new_contact_properties(properties: dict[str, Any]) -> dict[str, Any]:
 
 
 # --- calls -----------------------------------------------------------------------------------
-def call_properties(act: CallActivity) -> dict[str, Any]:
+def call_properties(act: LoggedCall) -> dict[str, Any]:
     inbound = act.direction == "inbound"
     title = f"{'Inbound' if inbound else 'Outbound'} Dialpad call"
     if act.state in ("missed", "voicemail"):
@@ -82,7 +81,7 @@ def recording_properties(url: str) -> dict[str, Any]:
 
 
 # --- notes -----------------------------------------------------------------------------------
-def note_properties(note: Note) -> dict[str, Any]:
+def note_properties(note: CallNote) -> dict[str, Any]:
     return {
         "hs_note_body": note.body,
         "hs_timestamp": iso_timestamp(note.created_at * 1000),
@@ -91,13 +90,13 @@ def note_properties(note: Note) -> dict[str, Any]:
 
 
 # --- SMS -------------------------------------------------------------------------------------
-def sms_properties(sms: SmsLog) -> dict[str, Any]:
+def sms_properties(sms: LoggedSms, text: str | None) -> dict[str, Any]:
     """VERIFY: HubSpot object used for SMS (a communication with channel type SMS is assumed).
-    ``sms.text`` is decrypted for this call only: it goes to HubSpot and nowhere else."""
+    ``text`` is decrypted for this call only: it goes to HubSpot and nowhere else."""
     return {
         "hs_communication_channel_type": "SMS",
         "hs_communication_logged_from": "CRM",
-        "hs_communication_body": sms.text or "",
-        "hs_timestamp": iso_timestamp(sms.activity.created_date),
-        REFERENCE_PROPERTY: sms.activity.activity_key,
+        "hs_communication_body": text or "",
+        "hs_timestamp": iso_timestamp(sms.created_date),
+        REFERENCE_PROPERTY: sms.activity_key,
     }

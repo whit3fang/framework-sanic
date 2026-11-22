@@ -13,10 +13,9 @@ from framework_sanic.sdk import ConnectorCredential, OAuthTokens, Settings
 from framework_sanic.testing.connector_contract import (
     ConnectorContract,
     contact_map,
-    contract_call,
-    contract_note,
 )
 from framework_sanic_hubspot import REFERENCE_PROPERTY, HubSpotConnector, make
+from samples import sample_call, sample_note
 
 
 class TestHubSpotContract(ConnectorContract):
@@ -33,24 +32,20 @@ class TestHubSpotContract(ConnectorContract):
         return api.add_contact
 
     @pytest.fixture
-    def record_count(self, api: FakeHubSpot) -> Any:
-        return api.count
-
-    @pytest.fixture
     def fail_with(self, api: FakeHubSpot) -> Any:
         return api.fail_with
 
 
 async def test_call_properties_and_associations(hubspot: HubSpotConnector, api: FakeHubSpot) -> None:
     contact = api.add_contact("Ada", "+14155550100")
-    act = contract_call(contact=contact_map(contact))
+    act = sample_call(contact=contact_map(contact))
     call = await hubspot.upsert_call(CRED, act, None)
     assert (call.dialpad_id, call.external_type) == (act.activity_key, "calls")
     await hubspot.upsert_call(CRED, act.model_copy(update={"duration_ms": 99_000}), call)
     await hubspot.attach_recording(CRED, call, "https://dialpad.example/rec/1")
-    note = await hubspot.add_note(CRED, call, contract_note())
+    note = await hubspot.add_note(CRED, call, sample_note())
     assert (note.dialpad_id, note.external_type) == ("dialpad:c1:note:note-00001", "notes")
-    await hubspot.add_note(CRED, call, contract_note())
+    await hubspot.add_note(CRED, call, sample_note())
     assert len(api.objects["calls"]) == 1 and len(api.objects["notes"]) == 1
     props = api.objects["calls"][call.external_id]
     assert props[REFERENCE_PROPERTY] == act.activity_key

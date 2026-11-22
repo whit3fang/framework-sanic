@@ -136,7 +136,11 @@ class Dev:
 
         connector = a.connector or os.environ.get("CONNECTOR", "fake")
         env["CONNECTOR"] = connector
-        default_features = "call_logging,sms_logging" + (",fake.dev_harness" if connector == "fake" else "")
+        default_features = (
+            "fake.calls,fake.sms,fake.notes,fake.dev_harness"
+            if connector == "fake"
+            else ",".join(f"{connector}.{kind}" for kind in ("calls", "sms", "notes"))
+        )
         env["FEATURES"] = a.features or os.environ.get("FEATURES", default_features)
         default("PLATFORM_ADAPTER", "fake")
         default("STORAGE_ADAPTER", "sqlalchemy")

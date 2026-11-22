@@ -1,5 +1,5 @@
 """Standalone events worker: `python -m framework_sanic.workers.stage1` (topic: events, i.e. the
-features' event handlers; with call_logging that is its stage 1)."""
+the listeners' event handlers)."""
 
 from framework_sanic.cli import main
 

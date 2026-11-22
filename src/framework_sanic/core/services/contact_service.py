@@ -3,7 +3,7 @@
 Which CRM contact a Dialpad caller is comes from an ``EntityMap`` keyed by the Dialpad contact
 reference. When there is none, the connector's ``match_contact`` (the integration's rules)
 decides and the result is stored; a rematch replaces it. Automatic matches and rematches are
-treated the same. The framework also caches card lookups and applies ``UNKNOWN_CALLER_POLICY``.
+treated the same. The framework also caches card lookups.
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ class ContactService:
         create_if_unknown: bool,
     ) -> EntityMap | None:
         """``resolve_for_activity``, creating a contact for an unknown number if asked to
-        (``UNKNOWN_CALLER_POLICY=create_contact``). VERIFY: default behaviour for unknown callers."""
+        (the listener's unknown-caller rule decides)."""
         contact = await self.resolve_for_activity(company_id, cred, dialpad_ref, number)
         if contact is None and number and create_if_unknown:
             created = await self.connector.create_entity(

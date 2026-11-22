@@ -9,11 +9,15 @@ dependencies = [
     "httpx>=0.28.1",
 ]
 
-# How the framework finds this integration: CONNECTOR=hubspot, FEATURES=hubspot.sms_campaign.
+# How the framework finds this integration:
+#   CONNECTOR=hubspot  FEATURES=hubspot.calls,hubspot.sms,hubspot.notes[,hubspot.sms_campaign]
 [project.entry-points."framework_sanic.connectors"]
 hubspot = "framework_sanic_hubspot:make"
 
 [project.entry-points."framework_sanic.features"]
+"hubspot.calls" = "framework_sanic_hubspot.listeners.calls:feature"
+"hubspot.sms" = "framework_sanic_hubspot.listeners.sms:feature"
+"hubspot.notes" = "framework_sanic_hubspot.listeners.notes:feature"
 "hubspot.sms_campaign" = "framework_sanic_hubspot.features.sms_campaign:feature"
 
 [tool.pytest.ini_options]

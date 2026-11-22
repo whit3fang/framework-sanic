@@ -32,13 +32,13 @@ def test_bad_storage_adapter_fails_at_startup(value: str, message: str) -> None:
 
 async def test_setup_receives_kinds_and_declared_indexes() -> None:
     s = build_services(
-        make_settings(
-            STORAGE_ADAPTER="tests.support.custom_storage:make", FEATURES="call_logging,sms_logging"
-        )
+        make_settings(STORAGE_ADAPTER="tests.support.custom_storage:make", FEATURES="fake.calls,fake.sms")
     )
     await startup(s, schedules=False)
     schema = s.repo.schema  # type: ignore[attr-defined]
-    assert {"Company", "Outbox", "AuditEvent", "CallActivity", "Note", "SmsActivity"} <= set(schema.kinds)
+    assert {"Company", "Outbox", "AuditEvent", "EntityMap", "FakeReceivedCall", "FakeReceivedSms"} <= set(
+        schema.kinds
+    )
     assert len(schema.kinds) == len(set(schema.kinds))
     assert IndexSpec("Target", ("company_id", "effective_enabled")) in schema.indexes
 

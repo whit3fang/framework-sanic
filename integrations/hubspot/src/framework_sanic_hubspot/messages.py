@@ -1,11 +1,11 @@
-"""SMS logging (``sms_logging`` feature): one HubSpot communication per SMS, associated with the
+"""SMS logging (used by ``listeners/sms.py``): one HubSpot communication per SMS, associated with the
 matched contact."""
 
 from __future__ import annotations
 
 from framework_sanic.sdk import ConnectorCredential, EntityMap
-from framework_sanic.sdk.sms_logging import SmsLog
 
+from .activities import LoggedSms
 from .crm import CrmClient
 from .mapping import sms_properties
 from .references import ActivityReferences, logged
@@ -16,11 +16,11 @@ class SmsActivities:
         self.crm = crm
         self.references = references
 
-    async def log(self, cred: ConnectorCredential, sms: SmsLog) -> EntityMap:
+    async def log(self, cred: ConnectorCredential, sms: LoggedSms, text: str | None) -> EntityMap:
         await self.references.ensure_property(cred, "communications")
-        created = await self.crm.create(cred, "communications", sms_properties(sms))
-        record = logged(sms.activity.activity_key, "communications", created["id"])
-        contact = sms.activity.contact
+        created = await self.crm.create(cred, "communications", sms_properties(sms, text))
+        record = logged(sms.activity_key, "communications", created["id"])
+        contact = sms.contact
         if contact:
             await self.crm.associate(
                 cred, "communications", record.external_id, "contacts", contact.external_id

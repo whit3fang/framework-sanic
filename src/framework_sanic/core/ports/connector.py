@@ -1,9 +1,9 @@
 """Connector port: one implementation per external service (HubSpot, fake, ...).
 
-The framework needs only what every integration shares: auth, the UI manifest and contact-like
-entity lookup/creation, plus error mapping. What a connector *writes* in response to events
-(call logs, SMS logs, ...) is defined by the features that use it: ``call_logging`` defines
-``CallLogger`` and ``sms_logging`` defines ``SmsLogger`` (each in the feature's ``port.py``).
+The framework needs only what every integration shares: auth, the UI manifest, contact matching
+and lookup/creation, plus error mapping. What is written in response to Dialpad activity (call
+logs, SMS logs, notes, ...) is up to the integration's listeners, which call whatever methods
+their own connector offers.
 """
 
 from __future__ import annotations

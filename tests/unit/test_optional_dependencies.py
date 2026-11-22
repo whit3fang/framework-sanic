@@ -84,7 +84,7 @@ def test_plain_install_runs_on_memory_adapters() -> None:
     script = BLOCK_OPTIONAL + textwrap.dedent(
         """
         import asyncio
-        import framework_sanic.sdk, framework_sanic.sdk.call_logging, framework_sanic.sdk.sms_logging
+        import framework_sanic.sdk
         from framework_sanic.bootstrap import build_services, startup
         from framework_sanic.core.domain.errors import ConfigurationError
         from framework_sanic.http.adapters.sanic import create_app
@@ -96,7 +96,7 @@ def test_plain_install_runs_on_memory_adapters() -> None:
             await h.connect_company()
             assert (await h.webhook("c1", call_event("7"))).status == 200
             await h.drain()
-            assert h.connector.records_for("call"), "call was not logged"
+            assert [r async for r in h.repo.query("FakeReceivedCall")], "call was not delivered"
             create_app(services=h.services, name="plain", embedded_workers=False)
             try:
                 build_services(make_settings(STORAGE_ADAPTER="sqlalchemy"))

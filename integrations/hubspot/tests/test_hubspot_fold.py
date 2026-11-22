@@ -1,4 +1,4 @@
-"""Property tests for the call-activity fold (build gate 6).
+"""Property tests for the HubSpot call fold (listeners/fold.py).
 
 For generated call sequences, shuffling, duplicating and dropping non-terminal progress events
 must yield an identical final activity. The terminal event carries the full call snapshot (as
@@ -14,11 +14,12 @@ from typing import Any
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from framework_sanic.core.domain.events import TERMINAL_CALL_STATES, CallEvent
-from framework_sanic.features.call_logging.merge import fold_call_event
-from framework_sanic.features.call_logging.models import CallActivity
+from framework_sanic.sdk import CallEvent
+from framework_sanic_hubspot.activities import LoggedCall as CallActivity
+from framework_sanic_hubspot.listeners.fold import fold_call_event
 
 TTL = 90 * 86400.0
+TERMINAL_CALL_STATES = frozenset({"hangup", "missed", "voicemail"})
 PROGRESS = ["calling", "ringing", "connected", "hold", "unhold", "preanswer"]
 
 

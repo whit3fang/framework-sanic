@@ -9,6 +9,24 @@
 
 from __future__ import annotations
 
-from .harness import NOW_MS, FakeClock, Harness, build_harness, call_event, make_settings, sms_event
+from .harness import (
+    NOW_MS,
+    FakeClock,
+    Harness,
+    build_harness,
+    call_event,
+    make_settings,
+    sms_event,
+    start_harness,
+)
 
-__all__ = ["NOW_MS", "FakeClock", "Harness", "build_harness", "call_event", "make_settings", "sms_event"]
+__all__ = [
+    "NOW_MS",
+    "FakeClock",
+    "Harness",
+    "build_harness",
+    "call_event",
+    "make_settings",
+    "sms_event",
+    "start_harness",
+]

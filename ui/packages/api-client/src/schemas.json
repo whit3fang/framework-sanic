@@ -305,6 +305,7 @@
       "type": "object"
     },
     "NoteIn": {
+      "description": "A note a user wrote in the contact card about a call (``POST /notes``). Not stored by the\nframework: it goes to the integration's ``NoteListener``.",
       "properties": {
         "body": {
           "maxLength": 10000,
@@ -332,7 +333,8 @@
           "title": "Dialpad Ref"
         },
         "note_id": {
-          "description": "Client-generated id; retries with the same id are idempotent",
+          "description": "Client-generated; retries with the same id are idempotent",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$",
           "title": "Note Id",
           "type": "string"
         }
@@ -351,24 +353,19 @@
           "title": "Call Id",
           "type": "string"
         },
-        "created": {
-          "title": "Created",
-          "type": "boolean"
-        },
         "note_id": {
           "title": "Note Id",
           "type": "string"
         },
         "synced": {
+          "default": false,
           "title": "Synced",
           "type": "boolean"
         }
       },
       "required": [
         "note_id",
-        "call_id",
-        "created",
-        "synced"
+        "call_id"
       ],
       "title": "NoteOut",
       "type": "object"
@@ -532,6 +529,11 @@
         },
         "manifest": {
           "$ref": "#/$defs/UiManifest"
+        },
+        "notes": {
+          "default": false,
+          "title": "Notes",
+          "type": "boolean"
         },
         "session_token": {
           "title": "Session Token",

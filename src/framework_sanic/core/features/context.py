@@ -218,7 +218,7 @@ def load_features(services: Services, names: list[str]) -> FeatureRegistry:
     if not registry.event_routes:
         log.warning(
             "no enabled feature handles Dialpad events (FEATURES=%r): nothing will be subscribed "
-            "or processed. Enable e.g. FEATURES=call_logging.",
+            "or processed. Enable a listener, e.g. FEATURES=hubspot.calls.",
             services.settings.FEATURES,
         )
     return registry

@@ -5,22 +5,20 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import defaultdict
 
 import pytest
 
 from framework_sanic.bootstrap import startup
 from framework_sanic.core.domain.records import Lane
 from framework_sanic.core.ports.queue import TOPIC_SYNC, QueueMessage
-from framework_sanic.features.call_logging.models import CallActivity
 from framework_sanic.testing import build_harness
+from tests.support import slow_jobs
 
 pytestmark = pytest.mark.load
 
 NOISY = 1500
 QUIET_COMPANIES = 5
 PER_QUIET = 10
-LATENCY = 0.002  # simulated connector latency per call
 
 
 @pytest.mark.parametrize("shard_count", [1, 4])
@@ -29,42 +27,22 @@ async def test_noisy_company_does_not_starve_others(shard_count: int) -> None:
         SHARD_COUNT=shard_count,
         WORKER_CONCURRENCY=16,
         PER_COMPANY_CONCURRENCY=4,
-        CONNECTOR_RATE_LIMIT_PER_MINUTE=10**6,
+        FEATURES="tests.support.slow_jobs",  # each job takes slow_jobs.LATENCY, like an external call
     )
     await startup(h.services, schedules=False)
-    companies = ["noisy"] + [f"quiet{i}" for i in range(QUIET_COMPANIES)]
-    for c in companies:
-        await h.connect_company(c, external=True)
-    h.connector.latency = LATENCY
-
-    done_at: dict[str, list[float]] = defaultdict(list)
-    original = h.connector.upsert_call
-
-    async def tracked(cred, activity, existing):  # type: ignore[no-untyped-def]
-        ref = await original(cred, activity, existing)
-        done_at[activity.company_id].append(time.monotonic())
-        return ref
-
-    h.connector.upsert_call = tracked  # type: ignore[method-assign]
+    done_at = slow_jobs.done_at
+    done_at.clear()
 
     async def seed(company: str, n: int) -> None:
         for i in range(n):
-            act = CallActivity(
-                company_id=company,
-                call_id=f"{company}-{i}",
-                state="hangup",
-                terminal=True,
-                expires_at=time.time() + 3600,
-            )
-            await h.repo.upsert(CallActivity.KIND, act.key(), lambda cur, a=act: a.to_record())
             await h.queue.publish(
                 QueueMessage(
                     message_id=f"{company}-{i}",
                     topic=TOPIC_SYNC,
                     company_id=company,
                     lane=Lane.LIVE,
-                    job="sync.call",
-                    payload={"call_id": f"{company}-{i}"},
+                    job="test.slow",
+                    payload={"n": i},
                 )
             )
 

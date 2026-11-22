@@ -27,9 +27,10 @@ framework-sanic = "framework_sanic.cli:main"
 fake = "framework_sanic.stubs.connector:make"
 
 [project.entry-points."framework_sanic.features"]
-call_logging = "framework_sanic.features.call_logging:feature"
-sms_logging = "framework_sanic.features.sms_logging:feature"
 "fake.dev_harness" = "framework_sanic.stubs.connector.features.dev_harness:feature"
+"fake.calls" = "framework_sanic.stubs.listeners:calls"
+"fake.sms" = "framework_sanic.stubs.listeners:sms"
+"fake.notes" = "framework_sanic.stubs.listeners:notes"
 
 # The test kit's fixtures (harness, ...) for any project with the `testing` extra installed.
 [project.entry-points.pytest11]

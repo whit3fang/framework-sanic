@@ -1,4 +1,5 @@
-"""Local harness feature (FEATURES=fake.dev_harness): inspect and seed the fake connector.
+"""Local harness feature (FEATURES=fake.dev_harness): seed the fake CRM's contacts and inspect what
+the fake listeners (``fake.calls`` / ``fake.sms`` / ``fake.notes``) received.
 
 Refuses to load unless both the platform and the connector are fakes, so it can never be exposed
 in a real deployment.
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from framework_sanic.core.domain.errors import ConfigurationError
 from framework_sanic.core.features.context import FeatureContext
 from framework_sanic.http.routes import RequestContext, route
+from framework_sanic.stubs.listeners import ReceivedCall, ReceivedNote, ReceivedSms
 
 
 class Empty(BaseModel):
@@ -26,24 +28,24 @@ class SeedContactIn(BaseModel):
 
 
 class RecordsOut(BaseModel):
-    records: list[dict[str, Any]]
+    calls: list[dict[str, Any]]
+    sms: list[dict[str, Any]]
+    notes: list[dict[str, Any]]
     contacts: list[dict[str, Any]]
 
 
 @route("GET", "/dev/fake-connector/records", auth="none")
 async def fake_records(req: Empty, ctx: RequestContext) -> RecordsOut:
     connector: Any = ctx.services.connector
+    repo = ctx.services.repo
+
+    async def all_of(kind: str) -> list[dict[str, Any]]:
+        return [rec async for rec in repo.query(kind)]
+
     return RecordsOut(
-        records=[
-            {
-                "ref": r.ref.model_dump(),
-                "reference": r.reference,
-                "properties": r.properties,
-                "recordings": r.recordings,
-                "notes": r.notes,
-            }
-            for r in connector.records.values()
-        ],
+        calls=await all_of(ReceivedCall.KIND),
+        sms=await all_of(ReceivedSms.KIND),
+        notes=await all_of(ReceivedNote.KIND),
         contacts=[e.model_dump() for e in connector.contacts.values()],
     )
 

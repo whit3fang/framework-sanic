@@ -1,18 +1,19 @@
-"""HubSpotConnector: what the framework calls. Each method delegates to the module that owns it:
+"""HubSpotConnector: the framework's ``Connector`` port plus the HubSpot operations this
+integration's listeners use. Each method delegates to the module that owns it:
 
-==========================  ===============================  =====================
-Framework port              Method                           Implemented in
-==========================  ===============================  =====================
-Connector                   auth                             ``auth.py``
-                            ui_manifest                      ``manifest.py``
-                            match_contact,                   ``contacts.py``
-                            search/get/create_entity
-                            map_error                        ``RestConnector`` (SDK)
-CallLogger (call_logging)   upsert_call, attach_recording,   ``calls.py``
-                            add_note
-SmsLogger (sms_logging)     log_sms                          ``messages.py``
-both                        find_by_reference                ``references.py``
-==========================  ===============================  =====================
+======================================  ===============================  =====================
+Used by                                 Method                           Implemented in
+======================================  ===============================  =====================
+the framework (``Connector``)           auth                             ``auth.py``
+                                        ui_manifest                      ``manifest.py``
+                                        match_contact,                   ``contacts.py``
+                                        search/get/create_entity
+                                        map_error                        ``RestConnector`` (SDK)
+``listeners/calls.py``, ``notes.py``    upsert_call, attach_recording,   ``calls.py``
+                                        add_note
+``listeners/sms.py``                    log_sms                          ``messages.py``
+all listeners                           find_by_reference                ``references.py``
+======================================  ===============================  =====================
 
 Below them: ``mapping.py`` (pure Dialpad → HubSpot translation) and ``crm.py`` (the HubSpot API).
 """
@@ -32,9 +33,8 @@ from framework_sanic.sdk import (
     RestConnector,
     UiManifest,
 )
-from framework_sanic.sdk.call_logging import CallActivity, Note
-from framework_sanic.sdk.sms_logging import SmsLog
 
+from .activities import CallNote, LoggedCall, LoggedSms
 from .auth import hubspot_auth
 from .calls import CallActivities
 from .contacts import Contacts
@@ -85,22 +85,23 @@ class HubSpotConnector(RestConnector):
     async def create_entity(self, cred: ConnectorCredential, data: NewEntity) -> Entity:
         return await self.contacts.create(cred, data)
 
-    # --- CallLogger (call_logging) ----------------------------------------------------------
+    # --- call logging (listeners/calls.py, listeners/notes.py) ------------------------------
     async def upsert_call(
-        self, cred: ConnectorCredential, activity: CallActivity, existing: EntityMap | None
+        self, cred: ConnectorCredential, activity: LoggedCall, existing: EntityMap | None
     ) -> EntityMap:
         return await self.calls.upsert(cred, activity, existing)
 
     async def attach_recording(self, cred: ConnectorCredential, call: EntityMap, url: str) -> None:
         await self.calls.attach_recording(cred, call, url)
 
-    async def add_note(self, cred: ConnectorCredential, call: EntityMap, note: Note) -> EntityMap:
+    async def add_note(self, cred: ConnectorCredential, call: EntityMap, note: CallNote) -> EntityMap:
         return await self.calls.add_note(cred, call, note)
 
-    # --- SmsLogger (sms_logging) ------------------------------------------------------------
-    async def log_sms(self, cred: ConnectorCredential, activity: SmsLog) -> EntityMap:
-        return await self.messages.log(cred, activity)
+    # --- SMS logging (listeners/sms.py) -----------------------------------------------------
+    async def log_sms(self, cred: ConnectorCredential, sms: LoggedSms, text: str | None) -> EntityMap:
+        """``text`` is the transiently decrypted message: sent to HubSpot, never stored."""
+        return await self.messages.log(cred, sms, text)
 
-    # --- CallLogger + SmsLogger -------------------------------------------------------------
+    # --- both -------------------------------------------------------------------------------
     async def find_by_reference(self, cred: ConnectorCredential, activity_key: str) -> EntityMap | None:
         return await self.references.find(cred, activity_key)

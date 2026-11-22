@@ -223,14 +223,16 @@ async def test_contact_validation(client: Client) -> None:
     assert r.status == 422
 
 
-async def test_notes_idempotent(client: Client) -> None:
+async def test_notes_go_to_the_note_listener(client: Client) -> None:
     await client.h.connect_company()
     token = await session_token(client)
     note = {"note_id": "note-abc-123", "call_id": "1001", "body": "follow up"}
     r1 = await client.request("POST", "/notes", headers=bearer(token), body=json.dumps(note))
     r2 = await client.request("POST", "/notes", headers=bearer(token), body=json.dumps(note))
-    assert r1.status == 202 and r1.json()["created"] is True
-    assert r2.status == 202 and r2.json()["created"] is False
+    assert r1.status == 202 and r1.json() == {"note_id": "note-abc-123", "call_id": "1001", "synced": True}
+    assert r2.status == 202
+    received = [r async for r in client.h.repo.query("FakeReceivedNote")]  # fake.notes keeps one per id
+    assert [(r["note_id"], r["body"]) for r in received] == [("note-abc-123", "follow up")]
     bad = await client.request(
         "POST", "/notes", headers=bearer(token), body=json.dumps({**note, "note_id": "x"})
     )

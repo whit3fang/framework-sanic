@@ -16,11 +16,8 @@ REPO = Path(__file__).resolve().parents[2]
 INTEGRATIONS = sorted(p.parent for p in (REPO / "integrations").glob("*/pyproject.toml"))
 
 
-@pytest.mark.parametrize(
-    "module", ["framework_sanic.sdk", "framework_sanic.sdk.call_logging", "framework_sanic.sdk.sms_logging"]
-)
-def test_sdk_exports_resolve(module: str) -> None:
-    mod = importlib.import_module(module)
+def test_sdk_exports_resolve() -> None:
+    mod = importlib.import_module("framework_sanic.sdk")
     missing = [n for n in mod.__all__ if not hasattr(mod, n)]
     assert not missing and len(set(mod.__all__)) == len(mod.__all__)
 
@@ -39,6 +36,12 @@ def test_sdk_covers_what_connectors_and_features_need() -> None:
         "ACK",
         "retry",
         "deadletter",
+        "CallListener",
+        "SmsListener",
+        "NoteListener",
+        "CallActivity",
+        "SmsActivity",
+        "EntityMap",
     ):
         assert name in sdk.__all__
 
@@ -71,7 +74,10 @@ def test_scaffold_generates_an_integration_package(tmp_path: Path) -> None:
     eps = meta["project"]["entry-points"]
     assert eps["framework_sanic.connectors"] == {"zendesk": "framework_sanic_zendesk:make"}
     assert eps["framework_sanic.features"] == {
-        "zendesk.tickets": "framework_sanic_zendesk.features.tickets:feature"
+        "zendesk.calls": "framework_sanic_zendesk.listeners.calls:feature",
+        "zendesk.sms": "framework_sanic_zendesk.listeners.sms:feature",
+        "zendesk.notes": "framework_sanic_zendesk.listeners.notes:feature",
+        "zendesk.tickets": "framework_sanic_zendesk.features.tickets:feature",
     }
     assert boundary_violations(root) == []
     assert contract_classes(root) == ["tests/test_zendesk_connector.py::TestZendeskContract"]
@@ -91,4 +97,7 @@ def test_check_reports_uninstalled_plugins(tmp_path: Path) -> None:
 def test_check_passes_for_hubspot() -> None:
     report = check_integration(REPO / "integrations" / "hubspot", run_tests=False)
     assert report.failures == []
-    assert "connector 'hubspot': supports call_logging, sms_logging" in report.notes
+    assert {
+        "feature 'hubspot.calls': starts with connector 'hubspot'",
+        "feature 'hubspot.notes': starts with connector 'hubspot'",
+    } <= set(report.notes)

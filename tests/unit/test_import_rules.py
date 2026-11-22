@@ -3,7 +3,8 @@
 * ``sanic``/``sanic_ext`` may be imported only in ``http/adapters/sanic.py``.
 * Core domain code imports no web framework, no infrastructure client and none of the outer
   layers (adapters, http, connectors, workers, bootstrap): everything external sits behind a port.
-* Core never imports features (``framework_sanic.features``): the framework only delivers events.
+* Core never imports the listener layer (``framework_sanic.listeners``): the framework only
+  delivers events; listeners sit on top of core.
 * Features cannot import each other.
 * Stubs (``framework_sanic.stubs``: fakes for tests and local dev) are never imported by production
   code. Only ``bootstrap.py`` (config-selected), the stubs themselves, the test kit
@@ -36,7 +37,7 @@ CORE_FORBIDDEN_INTERNAL = (
     "framework_sanic.workers",
     "framework_sanic.bootstrap",
     "framework_sanic.cli",
-    "framework_sanic.features",
+    "framework_sanic.listeners",
 )
 
 
@@ -109,9 +110,6 @@ def _feature_roots() -> dict[str, Path]:
     for d in (PKG / "core" / "features").iterdir():
         if d.is_dir() and (d / "__init__.py").exists():
             roots[_module_name(d / "__init__.py")] = d
-    for d in (PKG / "features").iterdir():
-        if d.is_dir() and (d / "__init__.py").exists():
-            roots[_module_name(d / "__init__.py")] = d
     for d in (PKG / "stubs" / "connector" / "features").iterdir():
         if d.is_dir() and (d / "__init__.py").exists():
             roots[_module_name(d / "__init__.py")] = d
@@ -122,8 +120,7 @@ def test_features_do_not_import_each_other() -> None:
     roots = _feature_roots()
     assert {
         "framework_sanic.core.features.platform",
-        "framework_sanic.features.call_logging",
-        "framework_sanic.features.sms_logging",
+        "framework_sanic.stubs.connector.features.dev_harness",
     } <= set(roots)
     offenders = []
     for name, root in roots.items():

@@ -1,5 +1,5 @@
 """Standalone sync worker: `python -m framework_sanic.workers.stage2` (topic: sync, i.e. features'
-follow-up jobs; with call_logging that is its stage 2)."""
+follow-up jobs queued by listeners)."""
 
 from framework_sanic.cli import main
 

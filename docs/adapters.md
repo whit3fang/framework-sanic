@@ -62,8 +62,8 @@ activities, notes, the outbox and the audit log.
 - **Token store:** encrypted credentials.
 - **Outbox service and relay.**
 - **`SyncGuards`:** reads the company's state to decide on parking.
-- **`call_logging`:** the call fold, sync bookkeeping and notes.
-- **`sms_logging`:** insert-once SMS records.
+- **Listeners (integration code):** whatever they store, e.g. HubSpot's `LoggedCall` fold and
+  insert-once `LoggedSms`; the fake listeners' delivery records.
 - **The platform feature:** scheduled `purge_expired`.
 - **`/readyz`:** health ping.
 
@@ -89,8 +89,8 @@ This is the durable buffer between the webhook endpoint and the feature handlers
 - **Webhook accept path:** publishes one message per feature handler. This is its only dependency.
 - **Worker runtime:** pull, ack, retry and deadletter, with fairness and per-company caps.
 - **`CompanyService`, admin routes, `Sweeper` and `ChangeLogWatcher`:** publish reconcile jobs.
-- **`call_logging`:** `sync.call` and `sync.note` jobs, via the outbox.
-- **`sms_logging`:** `sync.sms` jobs.
+- **Listeners:** their own follow-up jobs, e.g. HubSpot's `hubspot.sync_call` (via the outbox),
+  `hubspot.sync_sms` and `hubspot.sync_note`.
 - **`/readyz`:** ping and queue depths.
 
 ## Cache (`CACHE_URL`)
@@ -112,7 +112,6 @@ it's down.
 - **`SubscriptionReconciler`:** per-company reconcile lease.
 - **`ContactService`:** short-lived contact lookup cache.
 - **`SyncGuards`:** per-activity sync leases.
-- **`call_logging` stage 1:** dedupe markers.
 - **`/readyz`.**
 
 ## Key management: KeyProvider (`KMS_KEY`)
@@ -126,7 +125,7 @@ This wraps and unwraps the data keys behind `EnvelopeCipher`. Nothing uses it di
 
 **Used by (via `EnvelopeCipher`):**
 - the accept path, which encrypts SMS text before queueing;
-- `sms_logging`, which decrypts it just before sending;
+- SMS listeners (`await event.sms_text()`), which decrypt it just before sending;
 - the token store, for every stored token;
 - `startup()`, which warms the data-key cache.
 
@@ -161,22 +160,23 @@ one more adapter.
 ## Connectors (the external system)
 
 Connectors implement the `Connector` port: auth, the UI manifest, contact lookup and creation,
-and error mapping. Features add their own ports on top: `CallLogger` for `call_logging` and
-`SmsLogger` for `sms_logging`. Unlike the adapters above, connectors are plugins: each lives in
+and error mapping. Anything else (logging calls, SMS, notes) is the integration's own methods,
+called by its own listeners. Unlike the adapters above, connectors are plugins: each lives in
 its own integration package, is built on the SDK's `RestConnector`, and is found through the
 `framework_sanic.connectors` entry point (`CONNECTOR=<name>`).
 
 | Connector | What it is | Used for |
 |---|---|---|
 | `integrations/hubspot` | HubSpot CRM v3 objects + v4 associations. Each record stores the Dialpad activity key so retries never duplicate. | Production. Tested against an API mock only; no sandbox verification yet. |
-| `stubs/connector` (stub) | In-memory CRM, plus the `fake.dev_harness` feature for inspecting and seeding it. Selected with `CONNECTOR=fake`. | Tests, `scripts/dev.sh`, docker compose |
+| `stubs/connector` (stub) | In-memory CRM (contacts only; `fake.calls`/`fake.sms`/`fake.notes` record deliveries), plus the `fake.dev_harness` feature for inspecting and seeding it. Selected with `CONNECTOR=fake`. | Tests, `scripts/dev.sh`, docker compose |
 
 **Used by:**
 - **OAuth routes and `ExternalCredentialService`:** CRM authorization and token refresh.
 - **`ContactService`:** contact card lookup, search, rematch, and creating contacts. Matching is the connector's `match_contact`; the result is stored as an `EntityMap` and reused until a rematch replaces it.
 - **`/session`:** the UI manifest.
 - **`SyncGuards`:** connector name for rate buckets; mapping errors to retry or deadletter.
-- **`call_logging` and `sms_logging`:** their ports.
+- **The integration's listeners:** its own methods (HubSpot: `upsert_call`, `attach_recording`,
+  `add_note`, `log_sms`, `find_by_reference`).
 
 ## Which adapters run where
 

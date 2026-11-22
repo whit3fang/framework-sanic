@@ -77,8 +77,7 @@ export interface NoteIn {
 export interface NoteOut {
   note_id: string;
   call_id: string;
-  created: boolean;
-  synced: boolean;
+  synced?: boolean;
 }
 
 export interface Queued {
@@ -123,6 +122,7 @@ export interface SessionOut {
   dialpad_connect_url: string;
   connector: string;
   features: Array<string>;
+  notes?: boolean;
 }
 
 export interface TargetOut {

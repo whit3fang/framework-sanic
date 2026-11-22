@@ -124,14 +124,14 @@ def test_scope_validation_refuses_start() -> None:
 
 
 def test_features_load_and_integration_feature() -> None:
-    s = build_services(make_settings(FEATURES="call_logging,sms_logging,hubspot.sms_campaign"))
+    s = build_services(make_settings(FEATURES="fake.calls,fake.sms,hubspot.sms_campaign"))
     assert s.features is not None
     names = [c.name for c in s.features.contexts]
-    assert names == ["platform", "call_logging", "sms_logging", "hubspot.sms_campaign"]
-    assert ("events", "event.call:call_logging") in s.features.jobs
-    assert ("events", "event.sms:sms_logging") in s.features.jobs
+    assert names == ["platform", "fake.calls", "fake.sms", "hubspot.sms_campaign"]
+    assert ("events", "event.call:fake.calls") in s.features.jobs
+    assert ("events", "event.sms:fake.sms") in s.features.jobs
     assert s.reconciler.config.subscription_kinds == ("call", "sms")
-    # The logging features are opt-in: without them the platform subscribes to and processes nothing.
+    # Listeners are opt-in: without them the platform subscribes to and processes nothing.
     bare = build_services(make_settings(FEATURES="hubspot.sms_campaign"))
     assert bare.features is not None and bare.features.event_routes == {}
     assert bare.reconciler.config.subscription_kinds == ()
@@ -142,12 +142,12 @@ def test_feature_and_connector_discovery() -> None:
     from framework_sanic.bootstrap import installed_connectors, make_connector
     from framework_sanic.core.features.context import installed_features, load_feature
 
-    assert {"call_logging", "sms_logging", "fake.dev_harness", "hubspot.sms_campaign"} <= set(
+    assert {"fake.calls", "fake.sms", "fake.notes", "fake.dev_harness", "hubspot.calls"} <= set(
         installed_features()
     )
     assert {"fake", "hubspot"} <= set(installed_connectors())
     assert load_feature("platform").name == "platform"
-    assert load_feature("call_logging").name == "call_logging"
+    assert load_feature("fake.calls").name == "fake.calls"
     assert load_feature("hubspot.sms_campaign").name == "hubspot.sms_campaign"  # integration package
     assert load_feature("tests.support.echo_feature").name == "echo"
     for bad in ("nope", "nope.feature", "framework_sanic.sdk"):

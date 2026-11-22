@@ -2,7 +2,7 @@
 
 Plays Dialpad's role against a running service started with PLATFORM_ADAPTER=fake:
 admin OAuth connect, external connect, and signed webhook replay (including duplicated and
-shuffled sequences), then verifies the result landed in the fake connector.
+shuffled sequences), then verifies the fake call listener (``fake.calls``) received the call.
 
   framework-sanic replay e2e --base http://localhost:8000
   framework-sanic replay replay-call --call-id 42 --shuffle --duplicates 3
@@ -134,21 +134,20 @@ class Driver:
         return data
 
     def wait_for_call(self, company_id: str, call_id: str, timeout: float = 30.0) -> dict[str, Any]:
-        key = f"dialpad:{company_id}:call:{call_id}"
+        """Until the fake listener has received every state of the call and its recording."""
+        wanted = {e["state"] for e in call_sequence(call_id)}
         deadline = time.time() + timeout
         while time.time() < deadline:
-            matches = [r for r in self.records()["records"] if r["reference"] == key]
-            if (
-                matches
-                and matches[0]["properties"].get("state") == "hangup"
-                and (matches[0]["recordings"] or matches[0]["properties"].get("recordings"))
-            ):
-                if len(matches) != 1:
-                    raise SystemExit(f"expected exactly one external record, found {len(matches)}")
+            matches = [
+                r
+                for r in self.records()["calls"]
+                if r["company_id"] == company_id and r["call_id"] == call_id
+            ]
+            if matches and wanted <= set(matches[0]["states"]) and matches[0]["recording_urls"]:
                 record: dict[str, Any] = matches[0]
                 return record
             time.sleep(0.5)
-        raise SystemExit(f"call {call_id} did not reach the fake connector within {timeout}s")
+        raise SystemExit(f"call {call_id} was not fully delivered to the fake listener within {timeout}s")
 
 
 def sms_event(
@@ -171,7 +170,9 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="framework-sanic replay")
     p.add_argument("--base", default=os.environ.get("APP_BASE_URL", "http://localhost:8000"))
     sub = p.add_subparsers(dest="cmd", required=True)
-    e2e = sub.add_parser("e2e", help="connect, replay a shuffled/duplicated call, verify one external record")
+    e2e = sub.add_parser(
+        "e2e", help="connect, replay a shuffled/duplicated call, verify the listener got it all"
+    )
     e2e.add_argument("--call-id", default=str(int(time.time())))
     rc = sub.add_parser("replay-call")
     rc.add_argument("--company", default=COMPANY)
@@ -223,7 +224,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"replaying {len(events)} events (shuffled, 3 duplicates) for call {args.call_id}")
         d.send(COMPANY, events)
         record = d.wait_for_call(COMPANY, args.call_id)
-        print("external record:", json.dumps(record, indent=2))
+        print("received by fake.calls:", json.dumps(record, indent=2))
         print("E2E OK")
     elif args.cmd == "seed":
         d.connect_admin()

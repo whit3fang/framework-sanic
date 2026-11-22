@@ -132,7 +132,7 @@ class OAuth2Auth:
 
 class RestConnector:
     """Base class for HTTP/JSON connectors. Subclasses set ``name``, ``capabilities`` and ``auth``
-    and implement the entity methods (plus feature ports such as ``CallLogger``) with
+    and implement the entity methods (plus whatever methods your listeners call) with
     ``self.request(...)``."""
 
     name: str = ""

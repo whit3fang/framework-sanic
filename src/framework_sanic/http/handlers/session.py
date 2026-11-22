@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from framework_sanic.core.ports.connector import UiManifest
 from framework_sanic.core.services.company_service import AppState
 
-from ..routes import RequestContext, route
+from ..routes import ROUTE_ATTR, RequestContext, route
 
 
 class SessionIn(BaseModel):
@@ -25,6 +25,7 @@ class SessionOut(BaseModel):
     dialpad_connect_url: str
     connector: str
     features: list[str]  # enabled features, so the UI can show only what is available
+    notes: bool = False  # a NoteListener is enabled: the UI shows the notes panel
 
 
 class LogoutOut(BaseModel):
@@ -46,6 +47,9 @@ async def get_session(req: SessionIn, ctx: RequestContext) -> SessionOut:
         dialpad_connect_url=f"{s.settings.PUBLIC_BASE_URL.rstrip('/')}/oauth/dialpad/start",
         connector=s.connector.name,
         features=[c.name for c in s.features.contexts] if s.features else [],
+        notes=any(getattr(fn, ROUTE_ATTR).path == "/notes" for fn in s.features.routes)
+        if s.features
+        else False,
     )
 
 

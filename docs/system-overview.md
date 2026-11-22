@@ -58,22 +58,22 @@ webhook     └─────────────────────�
 **What a feature decides:** which events it wants, what they mean, what it writes to the
 external system, and when.
 
-**Reference features** (opt-in and independent, both used by HubSpot):
+**Listeners.** Integrations receive Dialpad activity through listener classes:
+`CallListener.on_call`, `SmsListener.on_sms` and `NoteListener.on_note` (the contact card's
+`POST /notes`). The framework supplies plain models (`CallActivity`, `SmsActivity`, `NoteIn`) and
+stores nothing on their behalf. HubSpot's listeners are the reference:
 
-- **`call_logging`:**
-  - **Stage 1:** a cheap merge of call events into an activity record. It never calls external
-    services.
-  - **Outbox:** the activity change and the sync job are written in the same transaction, so a
-    crash can't lose a sync.
-  - **Stage 2:** sync to the CRM through the `CallLogger` connector port, using the framework's
-    guards, then attach recordings and notes.
-- **`sms_logging`:** insert each SMS once, then a sync job decrypts the text just long enough to
-  send it through the `SmsLogger` port. The text is never stored.
+- **`hubspot.calls`:** a cheap fold of call events into one record (never calls HubSpot), written
+  with its sync job in one transaction (outbox), then a sync job that matches the contact,
+  creates or updates the HubSpot call and attaches recordings, using the framework's guards.
+- **`hubspot.sms`:** insert each SMS once, then a sync job decrypts the text just long enough to
+  send it. The text is never stored.
+- **`hubspot.notes`:** queue a job that waits until the call is logged, then adds the note.
 
 ## 4. Correctness under messy delivery
 
-The framework's contract is at-least-once, so handlers must be idempotent. `call_logging` shows
-how:
+The framework's contract is at-least-once, so handlers must be idempotent. HubSpot's call
+listener shows how:
 
 - Dialpad retries arrive out of order and duplicated. The call record is an order-independent
   fold: the highest-ranked event wins each field, and a terminal state like hangup can never be
@@ -110,10 +110,9 @@ These are framework guarantees, so every feature gets them for free:
 - A connector is one interface to implement plus a contract test suite it must pass.
 - A feature is the unit of business logic. It registers event handlers, routes, jobs,
   schedules, required permission scopes and the data it owns (deleted on uninstall). The
-  service refuses to start if a feature needs a scope that isn't granted, or if a logging feature
-  is enabled with a connector that doesn't implement its port.
-- The base connector is deliberately small (auth, contact lookup, error mapping). Features
-  define the extra ports they need, like `call_logging`'s `CallLogger` and `sms_logging`'s `SmsLogger`.
+  service refuses to start if a feature needs a scope that isn't granted.
+- The base connector is deliberately small (auth, contact lookup and matching, error mapping).
+  Whatever else an integration's listeners need is its own connector methods.
 - The UI contact card is driven by a manifest the connector provides, so the UI needs no
   connector-specific code.
 

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from framework_sanic.sdk import ConnectorCredential, EntityQuery, OAuthTokens
-from framework_sanic.sdk.sms_logging import SmsActivity, SmsLog
-from framework_sanic.testing.connector_contract import contract_call, contract_note
 from framework_sanic_hubspot.contacts import contact_filters
 from framework_sanic_hubspot.mapping import (
     REFERENCE_PROPERTY,
@@ -16,10 +14,11 @@ from framework_sanic_hubspot.mapping import (
     sms_properties,
 )
 from framework_sanic_hubspot.references import object_type_for
+from samples import sample_call, sample_note, sample_sms
 
 
 def test_inbound_call() -> None:
-    props = call_properties(contract_call(recording_urls=["https://dialpad.example/rec/1"]))
+    props = call_properties(sample_call(recording_urls=["https://dialpad.example/rec/1"]))
     assert props["hs_call_title"] == "Inbound Dialpad call"
     assert props["hs_call_body"] == "Inbound Dialpad call 1m 1s"
     assert props["hs_call_direction"] == "INBOUND" and props["hs_call_status"] == "COMPLETED"
@@ -30,7 +29,7 @@ def test_inbound_call() -> None:
 
 
 def test_missed_outbound_call_and_voicemail() -> None:
-    missed = contract_call().model_copy(
+    missed = sample_call().model_copy(
         update={"state": "missed", "direction": "outbound", "duration_ms": None}
     )
     props = call_properties(missed)
@@ -39,7 +38,7 @@ def test_missed_outbound_call_and_voicemail() -> None:
     )
     assert (props["hs_call_from_number"], props["hs_call_to_number"]) == ("+14155550199", "+14155550100")
     assert "hs_call_recording_url" not in props and props["hs_call_duration"] == 0
-    voicemail = contract_call(voicemail_url="https://dialpad.example/vm/1").model_copy(
+    voicemail = sample_call(voicemail_url="https://dialpad.example/vm/1").model_copy(
         update={"state": "voicemail"}
     )
     vm = call_properties(voicemail)
@@ -47,13 +46,13 @@ def test_missed_outbound_call_and_voicemail() -> None:
 
 
 def test_note_and_sms() -> None:
-    note = note_properties(contract_note())
+    note = note_properties(sample_note())
     assert note["hs_note_body"] == "hi" and note[REFERENCE_PROPERTY] == "dialpad:c1:note:note-00001"
-    act = SmsActivity(company_id="c1", sms_id=77, direction="inbound", from_number="+1415", created_date=0)
-    sms = sms_properties(SmsLog(activity=act, text="hello"))
+    act = sample_sms(created_date=0)
+    sms = sms_properties(act, "hello")
     assert sms["hs_communication_channel_type"] == "SMS" and sms["hs_communication_body"] == "hello"
     assert sms[REFERENCE_PROPERTY] == "dialpad:c1:sms:77"
-    assert sms_properties(SmsLog(activity=act, text=None))["hs_communication_body"] == ""
+    assert sms_properties(act, None)["hs_communication_body"] == ""
 
 
 def test_contact_entity_and_portal() -> None:

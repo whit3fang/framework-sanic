@@ -14,7 +14,7 @@ module "hubspot" {
   image           = var.image
   public_base_url = "https://hubspot.integrations.example.com"
   connector       = "hubspot"
-  features        = ["call_logging", "sms_logging"]
+  features        = ["hubspot.calls", "hubspot.sms", "hubspot.notes"]
   kms_key         = "projects/my-gcp-project/locations/us-central1/keyRings/integrations/cryptoKeys/hubspot"
   cache_url       = "redis://10.0.0.3:6379/0"
   vpc_connector   = "projects/my-gcp-project/locations/us-central1/connectors/integrations"
