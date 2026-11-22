@@ -1,0 +1,8 @@
+{
+  "name": "@ifw/connector-ui-hubspot",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": { "typecheck": "tsc --noEmit -p .", "test": "echo 'no tests'", "build": "tsc --noEmit -p ." },
+  "devDependencies": { "typescript": "5.7.2" }
+}

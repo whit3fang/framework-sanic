@@ -1,0 +1,747 @@
+{
+  "$defs": {
+    "Accepted": {
+      "properties": {
+        "accepted": {
+          "default": true,
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "deliveries": {
+          "default": 0,
+          "title": "Deliveries",
+          "type": "integer"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Accepted",
+      "type": "object"
+    },
+    "AuthorizeOut": {
+      "properties": {
+        "authorize_url": {
+          "title": "Authorize Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "authorize_url"
+      ],
+      "title": "AuthorizeOut",
+      "type": "object"
+    },
+    "CallbackIn": {
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        }
+      },
+      "title": "CallbackIn",
+      "type": "object"
+    },
+    "ContactOut": {
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/Entity"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "dialpad_ref": {
+          "title": "Dialpad Ref",
+          "type": "string"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Entity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "linked": {
+          "title": "Linked",
+          "type": "boolean"
+        },
+        "manifest": {
+          "$ref": "#/$defs/UiManifest"
+        }
+      },
+      "required": [
+        "dialpad_ref",
+        "entity",
+        "linked",
+        "candidates",
+        "manifest"
+      ],
+      "title": "ContactOut",
+      "type": "object"
+    },
+    "ContactQuery": {
+      "properties": {
+        "dialpad_ref": {
+          "maxLength": 200,
+          "minLength": 3,
+          "title": "Dialpad Ref",
+          "type": "string"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phone"
+        }
+      },
+      "required": [
+        "dialpad_ref"
+      ],
+      "title": "ContactQuery",
+      "type": "object"
+    },
+    "CreateContactIn": {
+      "properties": {
+        "dialpad_ref": {
+          "maxLength": 200,
+          "minLength": 3,
+          "title": "Dialpad Ref",
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": true,
+          "title": "Properties",
+          "type": "object"
+        }
+      },
+      "required": [
+        "dialpad_ref",
+        "properties"
+      ],
+      "title": "CreateContactIn",
+      "type": "object"
+    },
+    "Empty": {
+      "properties": {},
+      "title": "Empty",
+      "type": "object"
+    },
+    "Entity": {
+      "properties": {
+        "properties": {
+          "additionalProperties": true,
+          "title": "Properties",
+          "type": "object"
+        },
+        "ref": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "EntityRef": {
+      "description": "Reference to an external contact-like entity.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "object_type": {
+          "title": "Object Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object_type",
+        "id"
+      ],
+      "title": "EntityRef",
+      "type": "object"
+    },
+    "ExternalStartIn": {
+      "properties": {
+        "scope": {
+          "default": "user",
+          "enum": [
+            "user",
+            "company"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "ExternalStartIn",
+      "type": "object"
+    },
+    "Health": {
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "Health",
+      "type": "object"
+    },
+    "LoggingIn": {
+      "properties": {
+        "override": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Override"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_type": {
+          "title": "Target Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_type",
+        "target_id",
+        "override"
+      ],
+      "title": "LoggingIn",
+      "type": "object"
+    },
+    "LogoutOut": {
+      "properties": {
+        "revoked": {
+          "title": "Revoked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "title": "LogoutOut",
+      "type": "object"
+    },
+    "ManifestField": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "default": "text",
+          "enum": [
+            "text",
+            "email",
+            "phone",
+            "url",
+            "date"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ],
+      "title": "ManifestField",
+      "type": "object"
+    },
+    "NoteIn": {
+      "properties": {
+        "body": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Body",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Call Id",
+          "type": "string"
+        },
+        "dialpad_ref": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dialpad Ref"
+        },
+        "note_id": {
+          "description": "Client-generated id; retries with the same id are idempotent",
+          "title": "Note Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note_id",
+        "call_id",
+        "body"
+      ],
+      "title": "NoteIn",
+      "type": "object"
+    },
+    "NoteOut": {
+      "properties": {
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "note_id": {
+          "title": "Note Id",
+          "type": "string"
+        },
+        "synced": {
+          "title": "Synced",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "note_id",
+        "call_id",
+        "created",
+        "synced"
+      ],
+      "title": "NoteOut",
+      "type": "object"
+    },
+    "Queued": {
+      "properties": {
+        "queued": {
+          "default": true,
+          "title": "Queued",
+          "type": "boolean"
+        }
+      },
+      "title": "Queued",
+      "type": "object"
+    },
+    "RematchIn": {
+      "properties": {
+        "confirm_forward_only": {
+          "default": false,
+          "title": "Confirm Forward Only",
+          "type": "boolean"
+        },
+        "dialpad_ref": {
+          "maxLength": 200,
+          "minLength": 3,
+          "title": "Dialpad Ref",
+          "type": "string"
+        },
+        "entity_ref": {
+          "$ref": "#/$defs/EntityRef"
+        }
+      },
+      "required": [
+        "dialpad_ref",
+        "entity_ref"
+      ],
+      "title": "RematchIn",
+      "type": "object"
+    },
+    "RematchOut": {
+      "properties": {
+        "applies_to": {
+          "default": "future_activities_only",
+          "title": "Applies To",
+          "type": "string"
+        },
+        "dialpad_ref": {
+          "title": "Dialpad Ref",
+          "type": "string"
+        },
+        "entity_ref": {
+          "$ref": "#/$defs/EntityRef"
+        }
+      },
+      "required": [
+        "dialpad_ref",
+        "entity_ref"
+      ],
+      "title": "RematchOut",
+      "type": "object"
+    },
+    "SearchOut": {
+      "properties": {
+        "results": {
+          "items": {
+            "$ref": "#/$defs/Entity"
+          },
+          "title": "Results",
+          "type": "array"
+        }
+      },
+      "required": [
+        "results"
+      ],
+      "title": "SearchOut",
+      "type": "object"
+    },
+    "SearchQuery": {
+      "properties": {
+        "q": {
+          "maxLength": 200,
+          "minLength": 2,
+          "title": "Q",
+          "type": "string"
+        }
+      },
+      "required": [
+        "q"
+      ],
+      "title": "SearchQuery",
+      "type": "object"
+    },
+    "SessionIn": {
+      "properties": {},
+      "title": "SessionIn",
+      "type": "object"
+    },
+    "SessionOut": {
+      "properties": {
+        "admin_notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Admin Notice"
+        },
+        "company_id": {
+          "title": "Company Id",
+          "type": "string"
+        },
+        "connector": {
+          "title": "Connector",
+          "type": "string"
+        },
+        "dialpad_connect_url": {
+          "title": "Dialpad Connect Url",
+          "type": "string"
+        },
+        "expires_at": {
+          "title": "Expires At",
+          "type": "number"
+        },
+        "external": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "External",
+          "type": "object"
+        },
+        "features": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "is_admin": {
+          "title": "Is Admin",
+          "type": "boolean"
+        },
+        "manifest": {
+          "$ref": "#/$defs/UiManifest"
+        },
+        "session_token": {
+          "title": "Session Token",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "needs_admin_connect",
+            "awaiting_admin",
+            "needs_external_connect",
+            "ready",
+            "forbidden"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "user_id": {
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "company_id",
+        "user_id",
+        "is_admin",
+        "external",
+        "session_token",
+        "expires_at",
+        "manifest",
+        "dialpad_connect_url",
+        "connector",
+        "features"
+      ],
+      "title": "SessionOut",
+      "type": "object"
+    },
+    "TargetOut": {
+      "properties": {
+        "effective_enabled": {
+          "title": "Effective Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "override": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Override"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "parent_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Type"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_type": {
+          "title": "Target Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_type",
+        "target_id",
+        "name",
+        "parent_type",
+        "parent_id",
+        "override",
+        "effective_enabled"
+      ],
+      "title": "TargetOut",
+      "type": "object"
+    },
+    "TargetsOut": {
+      "properties": {
+        "notice": {
+          "title": "Notice",
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/TargetOut"
+          },
+          "title": "Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets",
+        "notice"
+      ],
+      "title": "TargetsOut",
+      "type": "object"
+    },
+    "UiManifest": {
+      "description": "Drives the manifest-based contact card; the UI has no connector-specific code.",
+      "properties": {
+        "connector": {
+          "title": "Connector",
+          "type": "string"
+        },
+        "create_fields": {
+          "items": {
+            "$ref": "#/$defs/ManifestField"
+          },
+          "title": "Create Fields",
+          "type": "array"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/ManifestField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "link_out_template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link Out Template"
+        },
+        "object_label": {
+          "default": "Contact",
+          "title": "Object Label",
+          "type": "string"
+        },
+        "search_placeholder": {
+          "default": "Search by name, email or phone",
+          "title": "Search Placeholder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connector",
+        "display_name",
+        "fields"
+      ],
+      "title": "UiManifest",
+      "type": "object"
+    },
+    "UninstallOut": {
+      "properties": {
+        "records_deleted": {
+          "title": "Records Deleted",
+          "type": "integer"
+        },
+        "subscriptions_removed": {
+          "title": "Subscriptions Removed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "records_deleted",
+        "subscriptions_removed"
+      ],
+      "title": "UninstallOut",
+      "type": "object"
+    },
+    "WebhookIn": {
+      "properties": {
+        "company_id": {
+          "title": "Company Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "company_id"
+      ],
+      "title": "WebhookIn",
+      "type": "object"
+    }
+  }
+}

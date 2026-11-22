@@ -1,0 +1,13 @@
+{
+  "name": "integration-ui",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --filter @ifw/ui-shell dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "e2e": "pnpm --filter @ifw/ui-shell e2e",
+    "generate:api": "cd .. && uv run framework-sanic export-schemas --out ui/packages/api-client/src"
+  }
+}

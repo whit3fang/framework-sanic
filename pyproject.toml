@@ -1,0 +1,81 @@
+[project]
+name = "framework-sanic"
+version = "0.1.0"
+description = "Reusable integration framework embedding in Dialpad and connecting it to external systems (CRMs, ticketing)."
+readme = "README.md"
+authors = [
+    { name = "Gauresh Shirodkar", email = "gaureshts@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "cryptography>=50.0.2",
+    "google-cloud-datastore>=2.27.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
+    "pyjwt>=2.15.1",
+    "redis>=5",
+    "sanic>=25.12.1",
+    "sqlalchemy[asyncio]>=2.1.9",
+]
+
+[project.scripts]
+framework-sanic = "framework_sanic.cli:main"
+
+[project.optional-dependencies]
+# Reusable contract suites (framework_sanic.testing) for people writing their own adapters.
+testing = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+]
+gcp = [
+    "google-cloud-kms>=3.19.0",
+    "google-cloud-pubsub>=2.44.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "fakeredis[lua]>=2.40.0",
+    "hypothesis>=6.170.17",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "ruff>=0.17.6",
+    "sanic-testing>=24.6.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "datastore: requires the Datastore emulator (DATASTORE_EMULATOR_HOST)",
+    "load: fairness load test",
+]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "framework_sanic.core.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["google.*", "lupa.*", "fakeredis.*", "sanic_testing.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["E501", "B008"]

@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local state
+.env
+*.db
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# UI
+node_modules/
+ui/**/dist/
+.local/

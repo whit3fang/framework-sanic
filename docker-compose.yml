@@ -1,0 +1,85 @@
+# Local harness: Datastore emulator, Redis, Pub/Sub emulator (local queue), the service with
+# embedded workers, and a fake Dialpad that connects and replays a shuffled/duplicated call
+# sequence end to end into the fake connector.
+#
+#   docker compose up --build                 # service + e2e replay (fake-dialpad exits 0 on success)
+#   docker compose run --rm contract-tests    # contract suites against the emulators and Redis
+#   QUEUE_ADAPTER=pubsub docker compose up    # use the Pub/Sub emulator instead of the in-process queue
+
+x-app-env: &app-env
+  PLATFORM_ADAPTER: fake
+  CONNECTOR: fake
+  FEATURES: call_logging,sms_logging,fake.dev_harness
+  STORAGE_ADAPTER: ${STORAGE_ADAPTER:-datastore}
+  DATASTORE_PROJECT: local-project
+  DATASTORE_EMULATOR_HOST: datastore:8081
+  DATABASE_URL: sqlite+aiosqlite:////tmp/framework.db
+  QUEUE_ADAPTER: ${QUEUE_ADAPTER:-memory}
+  PUBSUB_PROJECT: local-project
+  PUBSUB_EMULATOR_HOST: pubsub:8085
+  CACHE_URL: redis://redis:6379/0
+  PUBLIC_BASE_URL: http://app:8000
+  EMBEDDED_WORKERS: "true"
+  WEBHOOK_SECRET_KEY: local-webhook-master-key
+  DIALPAD_CLIENT_SECRET: local-dialpad-client-secret-0123456789
+  SESSION_SECRET: local-session-secret-0123456789abcdef
+  LOG_LEVEL: INFO
+
+services:
+  datastore:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators datastore start --project=local-project --host-port=0.0.0.0:8081 --no-store-on-disk --consistency=1.0
+    ports: ["8081:8081"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/"]
+      interval: 3s
+      retries: 40
+
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --project=local-project --host-port=0.0.0.0:8085
+    ports: ["8085:8085"]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+
+  app:
+    build: .
+    environment: *app-env
+    ports: ["8000:8000"]
+    depends_on:
+      datastore: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      pubsub: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 3s
+      retries: 30
+
+  fake-dialpad:
+    build: .
+    environment:
+      WEBHOOK_SECRET_KEY: local-webhook-master-key
+      DIALPAD_CLIENT_SECRET: local-dialpad-client-secret-0123456789
+      APP_BASE_URL: http://app:8000
+    command: python tools/fake_dialpad.py e2e
+    depends_on:
+      app: {condition: service_healthy}
+
+  contract-tests:
+    build: .
+    profiles: ["test"]
+    environment:
+      DATASTORE_EMULATOR_HOST: datastore:8081
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      TEST_REDIS_URL: redis://redis:6379/1
+    command: pytest -q tests/contract tests/property tests/unit
+    depends_on:
+      datastore: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      pubsub: {condition: service_started}
