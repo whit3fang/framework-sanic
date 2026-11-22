@@ -13,6 +13,7 @@ from framework_sanic.core.ports.queue import TOPIC_SYNC
 
 from .handlers import SmsLogging
 from .models import ENTITIES
+from .policy import SmsLogFilter, SmsLoggingSettings, SmsLogPolicy
 from .port import SmsLogger
 
 
@@ -25,15 +26,17 @@ class SmsLoggingFeature:
             raise ConfigurationError(
                 f"sms_logging requires a connector implementing SmsLogger; {s.connector.name!r} does not"
             )
-        sms = SmsLogging(s)
+        sms = SmsLogging(s, SmsLogPolicy(ctx.settings(SmsLoggingSettings), s.connector))
         ctx.on_event("sms", sms.on_event)
         ctx.job(TOPIC_SYNC, "sync.sms")(sms.sync_sms)
 
         ctx.require_scopes("message_content_export")
-        ctx.declare_config("ACTIVITY_TTL_DAYS", "UNKNOWN_CALLER_POLICY")
+        ctx.declare_config(
+            "ACTIVITY_TTL_DAYS", "UNKNOWN_CALLER_POLICY", "SMS_LOGGING_DIRECTIONS", "SMS_LOGGING_INCLUDE_TEXT"
+        )
         ctx.declare_company_data(*ENTITIES)
 
 
 feature = SmsLoggingFeature()
 
-__all__ = ["SmsLogger", "SmsLoggingFeature", "feature"]
+__all__ = ["SmsLogFilter", "SmsLogger", "SmsLoggingFeature", "SmsLoggingSettings", "feature"]

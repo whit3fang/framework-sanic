@@ -8,11 +8,11 @@ entity lookup/creation, plus error mapping. What a connector *writes* in respons
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from ..domain.entities import EntityRef
+from ..domain.entities import EntityMap
 from ..ports.platform import OAuthTokens
 
 
@@ -62,9 +62,30 @@ class EntityQuery(BaseModel):
 
 
 class Entity(BaseModel):
-    ref: EntityRef
+    external_id: str
+    external_type: str  # the integration's own name, e.g. "contact" or "lead"
     properties: dict[str, Any] = Field(default_factory=dict)
     url: str | None = None
+
+
+class Caller(BaseModel):
+    """The other party of a Dialpad call or SMS, to be matched to a CRM contact."""
+
+    dialpad_ref: str | None = None  # "contact:<dialpad contact id>" or "phone:<number>"
+    number: str | None = None  # E.164 when it parses, else as Dialpad sent it
+    # "card": the contact card is open (candidates are shown to the user).
+    # "activity": a call/SMS is being logged (the match is associated with the record).
+    purpose: Literal["card", "activity"] = "card"
+
+    @property
+    def dialpad_contact_id(self) -> str | None:
+        ref = self.dialpad_ref or ""
+        return ref.split(":", 1)[1] if ref.startswith("contact:") else None
+
+
+class ContactMatch(BaseModel):
+    entity: Entity | None = None  # the chosen contact; None = no match
+    candidates: list[Entity] = Field(default_factory=list)  # alternatives offered for rematch
 
 
 class NewEntity(BaseModel):
@@ -82,6 +103,7 @@ class ConnectorError(Exception):
         self.retry_after = retry_after
 
 
+@runtime_checkable
 class Connector(Protocol):
     name: str
     auth: ConnectorAuth
@@ -91,8 +113,16 @@ class Connector(Protocol):
 
     async def search_entity(self, cred: ConnectorCredential, query: EntityQuery) -> list[Entity]: ...
 
-    async def get_entity(self, cred: ConnectorCredential, ref: EntityRef) -> Entity: ...
+    async def get_entity(self, cred: ConnectorCredential, entity_map: EntityMap) -> Entity:
+        """The current CRM record behind a stored contact map; ``not_found`` if it was deleted."""
+        ...
 
     async def create_entity(self, cred: ConnectorCredential, data: NewEntity) -> Entity: ...
+
+    async def match_contact(self, cred: ConnectorCredential, caller: Caller) -> ContactMatch:
+        """Which CRM contact is this caller? The integration's matching rules (fields, formats,
+        ambiguity handling). Only called while the caller has no stored ``EntityMap``; the match
+        found is then stored until a rematch replaces it. ``framework_sanic.sdk.match_by_phone`` is a simple default."""
+        ...
 
     def map_error(self, exc: Exception) -> ConnectorError: ...

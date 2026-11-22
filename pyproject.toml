@@ -7,39 +7,75 @@ authors = [
     { name = "Gauresh Shirodkar", email = "gaureshts@gmail.com" }
 ]
 requires-python = ">=3.12"
+# Core, the SDK, the memory adapters, stubs and the HTTP layer. Backend client libraries come
+# with extras (below); selecting an adapter whose extra is missing fails at startup and names it.
 dependencies = [
-    "aiosqlite>=0.22.1",
     "cryptography>=50.0.2",
-    "google-cloud-datastore>=2.27.1",
     "httpx>=0.28.1",
     "pydantic>=2.14.4",
     "pydantic-settings>=2.16.3",
     "pyjwt>=2.15.1",
-    "redis>=5",
     "sanic>=25.12.1",
-    "sqlalchemy[asyncio]>=2.1.9",
 ]
 
 [project.scripts]
 framework-sanic = "framework_sanic.cli:main"
 
+# Plugins are discovered by entry point (CONNECTOR=<name>, FEATURES=<name>,...). The framework
+# registers its own here; integrations (integrations/*) register theirs in their pyproject.toml.
+[project.entry-points."framework_sanic.connectors"]
+fake = "framework_sanic.stubs.connector:make"
+
+[project.entry-points."framework_sanic.features"]
+call_logging = "framework_sanic.features.call_logging:feature"
+sms_logging = "framework_sanic.features.sms_logging:feature"
+"fake.dev_harness" = "framework_sanic.stubs.connector.features.dev_harness:feature"
+
+# The test kit's fixtures (harness, ...) for any project with the `testing` extra installed.
+[project.entry-points.pytest11]
+framework_sanic = "framework_sanic.testing.plugin"
+
 [project.optional-dependencies]
-# Reusable contract suites (framework_sanic.testing) for people writing their own adapters.
+# Production stack: STORAGE_ADAPTER=datastore, QUEUE_ADAPTER=pubsub, KMS_KEY=...
+gcp = [
+    "google-cloud-datastore>=2.27.1",
+    "google-cloud-kms>=3.19.0",
+    "google-cloud-pubsub>=2.44.0",
+]
+# CACHE_URL=redis://...
+redis = [
+    "redis>=5",
+]
+# STORAGE_ADAPTER=sqlalchemy (the local SQLite database; PostgreSQL also needs its driver)
+sql = [
+    "aiosqlite>=0.22.1",
+    "sqlalchemy[asyncio]>=2.1.9",
+]
+# What `framework-sanic dev` runs on (SQLite + Redis).
+dev-stack = [
+    "framework-sanic[redis,sql]",
+]
+# The test kit (framework_sanic.testing): harness, contract suites, pytest plugin.
 testing = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",
-]
-gcp = [
-    "google-cloud-kms>=3.19.0",
-    "google-cloud-pubsub>=2.44.0",
 ]
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
 build-backend = "uv_build"
 
+[tool.uv.workspace]
+# Each integration is its own package (own pyproject, entry points, tests) so it can move to its
+# own repository unchanged once the framework is published. `framework-sanic new` adds members.
+members = ["integrations/*"]
+
+[tool.uv.sources]
+framework-sanic-hubspot = { workspace = true }
+
 [dependency-groups]
 dev = [
+    "framework-sanic-hubspot",
     "fakeredis[lua]>=2.40.0",
     "hypothesis>=6.170.17",
     "mypy>=2.4.1",
@@ -52,7 +88,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["tests"]
+testpaths = ["tests", "integrations"]
 markers = [
     "datastore: requires the Datastore emulator (DATASTORE_EMULATOR_HOST)",
     "load: fairness load test",
@@ -62,6 +98,7 @@ markers = [
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
+files = ["src", "integrations/*/src"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
@@ -75,6 +112,7 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+src = ["src", "integrations/*/src", "integrations/*/tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]

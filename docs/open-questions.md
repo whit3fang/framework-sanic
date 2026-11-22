@@ -13,7 +13,7 @@ to change.
 | 5 | Default call-state list | `DIALPAD_CALL_STATES` | `hangup,missed,voicemail,recording` |
 | 6 | Whether group SMS (`contact_group`) should be logged | `SmsEvent.contact_group`, SMS `SubscriptionSpec` | Logged like any other SMS; `contact_group` is parsed but unused |
 | 7 | Default behaviour for unknown callers | `UNKNOWN_CALLER_POLICY` (`log_unassociated` / `create_contact` / `skip`) | `log_unassociated`: the activity is logged without a contact association |
-| 8 | HubSpot object used for SMS activity | `connectors/hubspot/connector.py::log_sms` | CRM `communications` object with `hs_communication_channel_type=SMS` |
+| 8 | HubSpot object used for SMS activity | `integrations/hubspot/src/framework_sanic_hubspot/mapping.py::sms_properties` | CRM `communications` object with `hs_communication_channel_type=SMS` |
 | 9 | HubSpot OAuth scopes / PKCE support | `HubSpotAuth.scopes`, `HubSpotAuth.authorize_url` | `oauth crm.objects.contacts.read crm.objects.contacts.write crm.schemas.calls.write`; PKCE challenge sent (ignored if unsupported) |
 | 10 | Change-log API shape and scopes | `ChangeLogSource` port, `adapters/changelog/noop.py` | No-op adapter. Lifecycle actions configured by `CHANGELOG_LIFECYCLE_ACTIONS`; matching events enqueue a reconcile |
 | 11 | Data residency requirements | Storage/queue/KMS adapters are per-deployment config | Single region assumed |

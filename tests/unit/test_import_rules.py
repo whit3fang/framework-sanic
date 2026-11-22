@@ -6,7 +6,8 @@
 * Core never imports features (``framework_sanic.features``): the framework only delivers events.
 * Features cannot import each other.
 * Stubs (``framework_sanic.stubs``: fakes for tests and local dev) are never imported by production
-  code. Only ``bootstrap.py`` (config-selected), the stubs themselves, tools and tests may.
+  code. Only ``bootstrap.py`` (config-selected), the stubs themselves, the test kit
+  (``framework_sanic.testing``), tools and tests may.
 """
 
 from __future__ import annotations
@@ -114,9 +115,6 @@ def _feature_roots() -> dict[str, Path]:
     for d in (PKG / "stubs" / "connector" / "features").iterdir():
         if d.is_dir() and (d / "__init__.py").exists():
             roots[_module_name(d / "__init__.py")] = d
-    for d in (PKG / "connectors").glob("*/features/*"):
-        if d.is_dir() and (d / "__init__.py").exists():
-            roots[_module_name(d / "__init__.py")] = d
     return roots
 
 
@@ -155,7 +153,7 @@ def test_production_code_does_not_import_test_helpers() -> None:
 def test_production_code_does_not_import_stubs() -> None:
     offenders = []
     for f in _all_files():
-        if f in STUB_ALLOWED or f.is_relative_to(PKG / "stubs"):
+        if f in STUB_ALLOWED or f.is_relative_to(PKG / "stubs") or f.is_relative_to(PKG / "testing"):
             continue
         for name in _imports(f):
             if name == "framework_sanic.stubs" or name.startswith("framework_sanic.stubs."):

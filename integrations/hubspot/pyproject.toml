@@ -1,0 +1,29 @@
+[project]
+name = "framework-sanic-hubspot"
+version = "0.1.0"
+description = "HubSpot connector (+ HubSpot-specific features) for the Dialpad integration framework."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "framework-sanic",
+    "httpx>=0.28.1",
+]
+
+# How the framework finds this integration: CONNECTOR=hubspot, FEATURES=hubspot.sms_campaign.
+[project.entry-points."framework_sanic.connectors"]
+hubspot = "framework_sanic_hubspot:make"
+
+[project.entry-points."framework_sanic.features"]
+"hubspot.sms_campaign" = "framework_sanic_hubspot.features.sms_campaign:feature"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.uv.sources]
+framework-sanic = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"

@@ -8,7 +8,7 @@ from framework_sanic.core.domain.entities import OutboxEntry
 from framework_sanic.core.ports.queue import TOPIC_SYNC
 from framework_sanic.features.call_logging.models import CallActivity
 from framework_sanic.features.sms_logging.models import SmsActivity
-from tests.conftest import NOW_MS, Harness, call_event, sms_event
+from framework_sanic.testing import NOW_MS, Harness, call_event, sms_event
 
 
 async def activity(h: Harness, call_id: str) -> CallActivity | None:

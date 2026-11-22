@@ -101,10 +101,6 @@
             }
           ]
         },
-        "linked": {
-          "title": "Linked",
-          "type": "boolean"
-        },
         "manifest": {
           "$ref": "#/$defs/UiManifest"
         }
@@ -112,7 +108,6 @@
       "required": [
         "dialpad_ref",
         "entity",
-        "linked",
         "candidates",
         "manifest"
       ],
@@ -175,13 +170,18 @@
     },
     "Entity": {
       "properties": {
+        "external_id": {
+          "title": "External Id",
+          "type": "string"
+        },
+        "external_type": {
+          "title": "External Type",
+          "type": "string"
+        },
         "properties": {
           "additionalProperties": true,
           "title": "Properties",
           "type": "object"
-        },
-        "ref": {
-          "$ref": "#/$defs/EntityRef"
         },
         "url": {
           "anyOf": [
@@ -197,28 +197,10 @@
         }
       },
       "required": [
-        "ref"
+        "external_id",
+        "external_type"
       ],
       "title": "Entity",
-      "type": "object"
-    },
-    "EntityRef": {
-      "description": "Reference to an external contact-like entity.",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "object_type": {
-          "title": "Object Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "object_type",
-        "id"
-      ],
-      "title": "EntityRef",
       "type": "object"
     },
     "ExternalStartIn": {
@@ -415,13 +397,23 @@
           "title": "Dialpad Ref",
           "type": "string"
         },
-        "entity_ref": {
-          "$ref": "#/$defs/EntityRef"
+        "external_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "External Id",
+          "type": "string"
+        },
+        "external_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "External Type",
+          "type": "string"
         }
       },
       "required": [
         "dialpad_ref",
-        "entity_ref"
+        "external_id",
+        "external_type"
       ],
       "title": "RematchIn",
       "type": "object"
@@ -437,13 +429,19 @@
           "title": "Dialpad Ref",
           "type": "string"
         },
-        "entity_ref": {
-          "$ref": "#/$defs/EntityRef"
+        "external_id": {
+          "title": "External Id",
+          "type": "string"
+        },
+        "external_type": {
+          "title": "External Type",
+          "type": "string"
         }
       },
       "required": [
         "dialpad_ref",
-        "entity_ref"
+        "external_id",
+        "external_type"
       ],
       "title": "RematchOut",
       "type": "object"

@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from framework_sanic.core.domain.entities import Entity, EntityRef, ExternalRef
+from framework_sanic.core.domain.entities import Entity, EntityMap
 from framework_sanic.core.domain.records import Key
 
 
@@ -38,9 +38,10 @@ class CallActivity(Entity):
     # For each scalar field: the rank of the event that set it. Makes the fold order-independent.
     field_ranks: dict[str, list[Any]] = Field(default_factory=dict)
     expires_at: float | None = None
-    # Stage-2 sync bookkeeping (never touched by the fold).
-    external_ref: ExternalRef | None = None
-    external_contact_ref: EntityRef | None = None
+    # Stage-2 sync bookkeeping (never touched by the fold). The logged record's own map is an
+    # ``EntityMap`` row keyed by ``activity_key``; ``contact`` is a copy of the contact map used
+    # when the call was first logged (a later rematch does not change it).
+    contact: EntityMap | None = None
     synced_hash: str | None = None
     synced_recordings: list[str] = Field(default_factory=list)
 
@@ -61,10 +62,14 @@ class Note(Entity):
     body: str
     created_at: float
     synced: bool = False
-    external_ref: ExternalRef | None = None
 
     def key(self) -> Key:
         return (self.company_id, self.note_id)
+
+    @property
+    def activity_key(self) -> str:
+        """Dialpad id of the note's ``EntityMap`` (and the reference stored on the CRM note)."""
+        return f"dialpad:{self.company_id}:note:{self.note_id}"
 
 
 ENTITIES: tuple[type[Entity], ...] = (CallActivity, Note)

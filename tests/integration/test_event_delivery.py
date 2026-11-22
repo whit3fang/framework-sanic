@@ -14,7 +14,7 @@ from framework_sanic.bootstrap import build_services, startup
 from framework_sanic.core.domain.errors import ConfigurationError
 from framework_sanic.core.ports.queue import TOPIC_EVENTS
 from framework_sanic.stubs.connector.connector import FakeConnector
-from tests.conftest import Harness, build_harness, call_event, make_settings, sms_event
+from framework_sanic.testing import Harness, build_harness, call_event, make_settings, sms_event
 from tests.support import echo_feature
 from tests.support.echo_feature import STATE, EchoState
 

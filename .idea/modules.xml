@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/framework-sanic.iml" filepath="$PROJECT_DIR$/.idea/framework-sanic.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/framework-sanic-hubspot.iml" filepath="$PROJECT_DIR$/.idea/framework-sanic-hubspot.iml" />
     </modules>
   </component>
 </project>

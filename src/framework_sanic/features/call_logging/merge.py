@@ -23,7 +23,7 @@ from framework_sanic.core.domain.records import Record, stable_hash
 from .models import CallActivity
 
 # Fields that are excluded from the "has the external view changed" hash.
-_SYNC_FIELDS = {"external_ref", "external_contact_ref", "synced_hash", "synced_recordings", "field_ranks"}
+_SYNC_FIELDS = {"contact", "synced_hash", "synced_recordings", "field_ranks"}
 
 
 def event_rank(ev: CallEvent) -> list[Any]:

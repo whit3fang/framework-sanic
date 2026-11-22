@@ -16,6 +16,7 @@ from framework_sanic.core.ports.queue import TOPIC_SYNC
 
 from .models import ENTITIES
 from .notes import add_note
+from .policy import CallLogFilter, CallLoggingSettings, CallLogPolicy
 from .port import CallLogger
 from .stage1 import Stage1
 from .stage2 import Stage2
@@ -31,7 +32,7 @@ class CallLoggingFeature:
                 f"call_logging requires a connector implementing CallLogger; {s.connector.name!r} does not"
             )
         stage1 = Stage1(s)
-        stage2 = Stage2(s)
+        stage2 = Stage2(s, CallLogPolicy(ctx.settings(CallLoggingSettings), s.connector))
 
         ctx.on_event("call", stage1.on_call)
         ctx.job(TOPIC_SYNC, "sync.call")(stage2.sync_call)
@@ -39,10 +40,17 @@ class CallLoggingFeature:
         ctx.route(add_note)
 
         ctx.require_scopes("recordings_export", "calls:list")
-        ctx.declare_config("ACTIVITY_TTL_DAYS", "UNKNOWN_CALLER_POLICY")
+        ctx.declare_config(
+            "ACTIVITY_TTL_DAYS",
+            "UNKNOWN_CALLER_POLICY",
+            "CALL_LOGGING_DIRECTIONS",
+            "CALL_LOGGING_SKIP_STATES",
+            "CALL_LOGGING_MIN_DURATION_SECONDS",
+            "CALL_LOGGING_RECORDINGS",
+        )
         ctx.declare_company_data(*ENTITIES)
 
 
 feature = CallLoggingFeature()
 
-__all__ = ["CallLogger", "CallLoggingFeature", "feature"]
+__all__ = ["CallLogFilter", "CallLogger", "CallLoggingFeature", "CallLoggingSettings", "feature"]

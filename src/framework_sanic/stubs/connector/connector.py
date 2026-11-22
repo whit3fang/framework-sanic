@@ -14,11 +14,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlencode
 
-from framework_sanic.core.domain.entities import EntityRef, ExternalRef
+from framework_sanic.core.domain.entities import EntityMap
 from framework_sanic.core.ports.connector import (
+    Caller,
     ConnectorAuth,
     ConnectorCredential,
     ConnectorError,
+    ContactMatch,
     Entity,
     EntityQuery,
     ManifestField,
@@ -26,6 +28,7 @@ from framework_sanic.core.ports.connector import (
     UiManifest,
 )
 from framework_sanic.core.ports.platform import OAuthTokens
+from framework_sanic.core.services.matching import match_by_phone
 from framework_sanic.core.services.phone import digits
 from framework_sanic.features.call_logging.models import CallActivity, Note
 from framework_sanic.features.sms_logging.models import SmsLog
@@ -61,7 +64,7 @@ class FakeAuth:
 
 @dataclass
 class FakeRecord:
-    ref: ExternalRef
+    ref: EntityMap
     properties: dict[str, Any]
     reference: str | None = None
     recordings: list[str] = field(default_factory=list)
@@ -90,7 +93,8 @@ class FakeConnector:
     def seed_contact(self, name: str, phone: str, email: str | None = None) -> Entity:
         cid = f"contact-{next(self._ids)}"
         entity = Entity(
-            ref=EntityRef(object_type="contact", id=cid),
+            external_id=cid,
+            external_type="contact",
             properties={"name": name, "phone": phone, "email": email},
             url=f"https://fake.example/contacts/{cid}",
         )
@@ -130,11 +134,14 @@ class FakeConnector:
                 out.append(e)
         return out[: query.limit]
 
-    async def get_entity(self, cred: ConnectorCredential, ref: EntityRef) -> Entity:
+    async def match_contact(self, cred: ConnectorCredential, caller: Caller) -> ContactMatch:
+        return await match_by_phone(self, cred, caller)
+
+    async def get_entity(self, cred: ConnectorCredential, entity_map: EntityMap) -> Entity:
         await self._op("get_entity")
-        if ref.id not in self.contacts:
-            raise ConnectorError("not_found", f"contact {ref.id} not found")
-        return self.contacts[ref.id]
+        if entity_map.external_id not in self.contacts:
+            raise ConnectorError("not_found", f"contact {entity_map.external_id} not found")
+        return self.contacts[entity_map.external_id]
 
     async def create_entity(self, cred: ConnectorCredential, data: NewEntity) -> Entity:
         await self._op("create_entity")
@@ -145,12 +152,16 @@ class FakeConnector:
             props.get("email"),
         )
 
-    def _create(self, object_type: str, reference: str, props: dict[str, Any]) -> ExternalRef:
-        ref = ExternalRef(system=self.name, object_type=object_type, id=f"{object_type}-{next(self._ids)}")
-        self.records[ref.id] = FakeRecord(ref=ref, properties=props, reference=reference)
+    def _create(self, object_type: str, reference: str, props: dict[str, Any]) -> EntityMap:
+        ref = EntityMap(
+            dialpad_id=reference, external_type=object_type, external_id=f"{object_type}-{next(self._ids)}"
+        )
+        self.records[ref.external_id] = FakeRecord(ref=ref, properties=props, reference=reference)
         return ref
 
-    async def upsert_call(self, cred: ConnectorCredential, activity: CallActivity) -> ExternalRef:
+    async def upsert_call(
+        self, cred: ConnectorCredential, activity: CallActivity, existing: EntityMap | None
+    ) -> EntityMap:
         await self._op("upsert_call")
         props = {
             "state": activity.state,
@@ -158,15 +169,15 @@ class FakeConnector:
             "duration_ms": activity.duration_ms,
             "external_number": activity.external_number,
             "owner": activity.owner_user_id,
-            "contact": activity.external_contact_ref.id if activity.external_contact_ref else None,
+            "contact": activity.contact.external_id if activity.contact else None,
             "recordings": list(activity.recording_urls),
         }
-        if activity.external_ref and activity.external_ref.id in self.records:
-            self.records[activity.external_ref.id].properties.update(props)
-            return activity.external_ref
+        if existing and existing.external_id in self.records:
+            self.records[existing.external_id].properties.update(props)
+            return existing
         return self._create("call", activity.activity_key, props)
 
-    async def log_sms(self, cred: ConnectorCredential, activity: SmsLog) -> ExternalRef:
+    async def log_sms(self, cred: ConnectorCredential, activity: SmsLog) -> EntityMap:
         await self._op("log_sms")
         act = activity.activity
         return self._create(
@@ -175,24 +186,29 @@ class FakeConnector:
             {
                 "direction": act.direction,
                 "text": activity.text,
-                "contact": act.external_contact_ref.id if act.external_contact_ref else None,
+                "contact": act.contact.external_id if act.contact else None,
             },
         )
 
-    async def attach_recording(self, cred: ConnectorCredential, ref: ExternalRef, url: str) -> None:
+    async def attach_recording(self, cred: ConnectorCredential, call: EntityMap, url: str) -> None:
         await self._op("attach_recording")
-        rec = self.records[ref.id]
+        rec = self.records[call.external_id]
         if url not in rec.recordings:
             rec.recordings.append(url)
 
-    async def add_note(self, cred: ConnectorCredential, ref: ExternalRef, note: Note) -> None:
+    async def add_note(self, cred: ConnectorCredential, call: EntityMap, note: Note) -> EntityMap:
         await self._op("add_note")
-        rec = self.records[ref.id]
+        rec = self.records[call.external_id]
         marker = f"{note.note_id}:{note.body}"
         if marker not in rec.notes:
             rec.notes.append(marker)
+        return EntityMap(
+            dialpad_id=note.activity_key,
+            external_type="note",
+            external_id=f"{call.external_id}:{note.note_id}",
+        )
 
-    async def find_by_reference(self, cred: ConnectorCredential, activity_key: str) -> ExternalRef | None:
+    async def find_by_reference(self, cred: ConnectorCredential, activity_key: str) -> EntityMap | None:
         await self._op("find_by_reference")
         for rec in self.records.values():
             if rec.reference == activity_key:
@@ -218,4 +234,4 @@ class FakeConnector:
 
     # test helpers
     def records_for(self, object_type: str) -> list[FakeRecord]:
-        return [r for r in self.records.values() if r.ref.object_type == object_type]
+        return [r for r in self.records.values() if r.ref.external_type == object_type]

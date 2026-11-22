@@ -18,7 +18,7 @@ const manifest = {
 describe("ContactCard", () => {
   it("renders manifest fields and the link-out", () => {
     const w = mount(ContactCard, {
-      props: { manifest, entity: { ref: { object_type: "contact", id: "7" }, properties: { name: "Ada", email: "ada@x.io" } } },
+      props: { manifest, entity: { external_id: "7", external_type: "contact", properties: { name: "Ada", email: "ada@x.io" } } },
     });
     expect(w.text()).toContain("Name");
     expect(w.text()).toContain("Ada");
@@ -29,7 +29,7 @@ describe("ContactCard", () => {
   it("escapes external data and drops unsafe links", () => {
     const evil = '<img src=x onerror="alert(1)">';
     const w = mount(ContactCard, {
-      props: { manifest, entity: { ref: { object_type: "contact", id: "1" }, properties: { name: evil }, url: "javascript:alert(1)" } },
+      props: { manifest, entity: { external_id: "1", external_type: "contact", properties: { name: evil }, url: "javascript:alert(1)" } },
     });
     expect(w.html()).not.toContain("<img");
     expect(w.text()).toContain(evil);

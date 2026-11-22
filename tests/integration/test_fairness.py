@@ -13,7 +13,7 @@ from framework_sanic.bootstrap import startup
 from framework_sanic.core.domain.records import Lane
 from framework_sanic.core.ports.queue import TOPIC_SYNC, QueueMessage
 from framework_sanic.features.call_logging.models import CallActivity
-from tests.conftest import build_harness
+from framework_sanic.testing import build_harness
 
 pytestmark = pytest.mark.load
 
@@ -40,8 +40,8 @@ async def test_noisy_company_does_not_starve_others(shard_count: int) -> None:
     done_at: dict[str, list[float]] = defaultdict(list)
     original = h.connector.upsert_call
 
-    async def tracked(cred, activity):  # type: ignore[no-untyped-def]
-        ref = await original(cred, activity)
+    async def tracked(cred, activity, existing):  # type: ignore[no-untyped-def]
+        ref = await original(cred, activity, existing)
         done_at[activity.company_id].append(time.monotonic())
         return ref
 

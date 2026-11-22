@@ -16,7 +16,7 @@ from framework_sanic.features.call_logging.models import CallActivity, Note
 from framework_sanic.features.call_logging.notes import NotesService
 from framework_sanic.features.sms_logging.models import SmsActivity
 from framework_sanic.stubs.connector.connector import FakeHTTPError
-from tests.conftest import NOW_MS, Harness, call_event, sms_event
+from framework_sanic.testing import NOW_MS, Harness, call_event, sms_event
 
 
 def sync_msg(call_id: str = "1001", n: int = 0) -> QueueMessage:
@@ -53,11 +53,23 @@ async def test_end_to_end_replay_into_fake_connector(harness: Harness) -> None:
     calls = h.connector.records_for("call")
     assert len(calls) == 1
     rec = calls[0]
-    assert rec.properties["state"] == "hangup" and rec.properties["contact"] == contact.ref.id
+    assert rec.properties["state"] == "hangup" and rec.properties["contact"] == contact.external_id
     assert rec.recordings == ["https://rec/1001"] or rec.properties["recordings"] == ["https://rec/1001"]
     act = CallActivity.from_record(await h.repo.get(CallActivity.KIND, ("c1", "1001")))  # type: ignore[arg-type]
-    assert act.external_ref == rec.ref and act.external_contact_ref == contact.ref
+    assert act.contact is not None and act.contact.external_id == contact.external_id
     assert act.synced_hash is not None
+    # stored maps: the call record, and the caller's contact (matched once, then reused)
+    logged = await h.services.entity_maps.get("c1", act.activity_key)
+    assert logged is not None and (logged.external_type, logged.external_id) == ("call", rec.ref.external_id)
+    caller = await h.services.entity_maps.get("c1", act.dialpad_contact_ref or "")
+    assert caller is not None and caller.external_id == contact.external_id
+
+
+async def forget_logged_call(h: Harness, call_id: str = "1001") -> None:
+    await h.services.entity_maps.delete("c1", f"dialpad:c1:call:{call_id}")
+    await h.repo.upsert(
+        CallActivity.KIND, ("c1", call_id), lambda cur: {**cur, "synced_hash": None} if cur else None
+    )
 
 
 async def test_duplicate_stage2_delivery_creates_one_record(harness: Harness) -> None:
@@ -65,26 +77,20 @@ async def test_duplicate_stage2_delivery_creates_one_record(harness: Harness) ->
     await h.connect_company()
     await replay_call(h)
     await h.drain()
-    # Simulate the activity record losing its external_ref (e.g. crash after the external create,
-    # before the local write) and several duplicate deliveries, sequential and concurrent.
-    await h.repo.upsert(
-        CallActivity.KIND, ("c1", "1001"), lambda cur: {**cur, "external_ref": None, "synced_hash": None}
-    )
+    # Simulate losing the call's EntityMap (e.g. crash after the external create, before the
+    # local write) and several duplicate deliveries, sequential and concurrent.
+    await forget_logged_call(h)
     for i in range(3):
         await h.queue.publish(sync_msg(n=i))
     await h.drain()
-    await h.repo.upsert(
-        CallActivity.KIND, ("c1", "1001"), lambda cur: {**cur, "external_ref": None, "synced_hash": None}
-    )
+    await forget_logged_call(h)
     stage2 = next(p for p in h.workers.pools if p.topic == TOPIC_SYNC)
     handler = stage2.handlers["sync.call"]
     h.cache.down = True  # no lease: find_by_reference must still prevent duplicates (sequentially)
     for i in range(3):
         await handler(sync_msg(n=10 + i))
     h.cache.down = False
-    await h.repo.upsert(
-        CallActivity.KIND, ("c1", "1001"), lambda cur: {**cur, "external_ref": None, "synced_hash": None}
-    )
+    await forget_logged_call(h)
     h.connector.latency = 0.005
     results = await asyncio.gather(*(handler(sync_msg(n=20 + i)) for i in range(5)))  # concurrent duplicates
     assert all(r.action in ("ack", "retry") for r in results)
@@ -172,7 +178,8 @@ async def test_sms_sync_text_reaches_connector_never_storage(harness: Harness) -
     sms = h.connector.records_for("sms")
     assert len(sms) == 1 and sms[0].properties["text"] == "meet at noon"
     act = SmsActivity.from_record(await h.repo.get(SmsActivity.KIND, ("c1", 42)))  # type: ignore[arg-type]
-    assert act.synced and act.external_contact_ref is not None
+    assert act.synced and act.contact is not None
+    assert await h.services.entity_maps.get("c1", act.activity_key) is not None
     stored = [r async for r in h.repo.query("SmsActivity")] + [r async for r in h.repo.query("Outbox")]
     dump = json.dumps(stored)
     assert "meet at noon" not in dump
@@ -220,7 +227,7 @@ async def test_rematch_is_forward_only(harness: Harness) -> None:
     from framework_sanic.core.services.session_service import Principal
 
     await h.services.contacts.rematch(
-        Principal(company_id="c1", user_id="c1-u1"), "phone:+14155550100", bob.ref
+        Principal(company_id="c1", user_id="c1-u1"), "phone:+14155550100", "contact", bob.external_id
     )
     # a later update to the old call (new recording) keeps its original contact
     await h.webhook(
@@ -229,8 +236,8 @@ async def test_rematch_is_forward_only(harness: Harness) -> None:
     await replay_call(h, "1002", shuffle=False)
     await h.drain()
     by_ref = {r.reference: r for r in h.connector.records_for("call")}
-    assert by_ref["dialpad:c1:call:1001"].properties["contact"] == ada.ref.id
-    assert by_ref["dialpad:c1:call:1002"].properties["contact"] == bob.ref.id
+    assert by_ref["dialpad:c1:call:1001"].properties["contact"] == ada.external_id
+    assert by_ref["dialpad:c1:call:1002"].properties["contact"] == bob.external_id
     assert "https://rec/late" in by_ref["dialpad:c1:call:1001"].recordings
 
 

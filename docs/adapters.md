@@ -30,7 +30,7 @@ Fakes of external systems (Dialpad, the CRM) are not adapters. They live in
 | Scheduler | (always) | `scheduler/memory.py` | Periodic jobs |
 | ChangeLogSource | (always) | `changelog/noop.py` | Dialpad change log (placeholder) |
 | HTTP framework | (always) | `http/adapters/sanic.py` | Turns Sanic requests into framework-neutral ones |
-| Connector | `CONNECTOR` | `connectors/hubspot` (fake in `stubs/connector`) | The external system (CRM) |
+| Connector | `CONNECTOR` | integration packages, e.g. `integrations/hubspot` (fake in `stubs/connector`) | The external system (CRM) |
 
 ## Storage: Repository (`STORAGE_ADAPTER`)
 
@@ -58,7 +58,7 @@ activities, notes, the outbox and the audit log.
 - **`CompanyService`:** install, app state, parking, uninstall.
 - **`TargetService`:** the target hierarchy and per-target logging overrides.
 - **`SubscriptionReconciler` and `Sweeper`:** stored subscriptions, claimed with an atomic upsert.
-- **`ContactService`:** rematch links.
+- **`EntityMapService`:** `EntityMap` rows (Dialpad id → external record) for contacts and logged activities.
 - **Token store:** encrypted credentials.
 - **Outbox service and relay.**
 - **`SyncGuards`:** reads the company's state to decide on parking.
@@ -135,7 +135,7 @@ This wraps and unwraps the data keys behind `EnvelopeCipher`. Nothing uses it di
 | Adapter | Port | What it does | Used by |
 |---|---|---|---|
 | `dialpad/platform.py` | ParentPlatform | Real Dialpad REST client: OAuth code exchange and refresh, identify company and admin, token check, list targets, manage webhooks and subscriptions | OAuth routes, `DialpadCredentialService`, `TargetService`, and `SubscriptionReconciler` via `PlatformGateway` (which applies the 1200/min budget) |
-| `stubs/dialpad.py` (stub) | ParentPlatform | In-memory Dialpad. OAuth redirects straight back with a PKCE-bound code; it serves a sample company and records subscriptions. Selected with `PLATFORM_ADAPTER=fake`. | Tests, `scripts/dev.sh`, docker compose |
+| `stubs/dialpad.py` (stub) | ParentPlatform | In-memory Dialpad. OAuth redirects straight back with a PKCE-bound code; it serves a sample company and records subscriptions. Selected with `PLATFORM_ADAPTER=fake`. | Tests, `framework-sanic dev`, docker compose |
 | `dialpad/webhook.py` | WebhookVerifier | Verifies the signed JWT body of incoming webhooks. Per-company secrets are derived from `WEBHOOK_SECRET_KEY`, so no database lookup is needed. | Webhook-signature middleware; `SubscriptionReconciler` (registers each company's secret) |
 | `dialpad/id_token.py` | IdTokenVerifier | Verifies the iframe's per-user `id_token`. The format is assumed and unconfirmed: see open question #2. Dev tokens are minted by `stubs/dialpad_tokens.py`. | Auth middleware |
 
@@ -162,16 +162,18 @@ one more adapter.
 
 Connectors implement the `Connector` port: auth, the UI manifest, contact lookup and creation,
 and error mapping. Features add their own ports on top: `CallLogger` for `call_logging` and
-`SmsLogger` for `sms_logging`.
+`SmsLogger` for `sms_logging`. Unlike the adapters above, connectors are plugins: each lives in
+its own integration package, is built on the SDK's `RestConnector`, and is found through the
+`framework_sanic.connectors` entry point (`CONNECTOR=<name>`).
 
 | Connector | What it is | Used for |
 |---|---|---|
-| `connectors/hubspot` | HubSpot CRM v3 objects + v4 associations. Each record stores the Dialpad activity key so retries never duplicate. | Production. Tested against an API mock only; no sandbox verification yet. |
+| `integrations/hubspot` | HubSpot CRM v3 objects + v4 associations. Each record stores the Dialpad activity key so retries never duplicate. | Production. Tested against an API mock only; no sandbox verification yet. |
 | `stubs/connector` (stub) | In-memory CRM, plus the `fake.dev_harness` feature for inspecting and seeding it. Selected with `CONNECTOR=fake`. | Tests, `scripts/dev.sh`, docker compose |
 
 **Used by:**
 - **OAuth routes and `ExternalCredentialService`:** CRM authorization and token refresh.
-- **`ContactService`:** contact card lookup, search, rematch, and matching or creating contacts.
+- **`ContactService`:** contact card lookup, search, rematch, and creating contacts. Matching is the connector's `match_contact`; the result is stored as an `EntityMap` and reused until a rematch replaces it.
 - **`/session`:** the UI manifest.
 - **`SyncGuards`:** connector name for rate buckets; mapping errors to retry or deadletter.
 - **`call_logging` and `sms_logging`:** their ports.

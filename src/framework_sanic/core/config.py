@@ -7,9 +7,9 @@ properties, so they behave the same in env vars, .env files and terraform.
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,17 @@ def _csv(raw: str) -> list[str]:
 
 
 class Settings(BaseSettings):
+    """Framework settings. Connectors and features own theirs (``PluginSettings``)."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", frozen=True)
+    _env_file_used: Any = PrivateAttr(default=".env")
+    _explicit: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    def __init__(self, **values: Any) -> None:
+        super().__init__(**values)
+        # Remembered so plugin settings load from the same .env and see explicit overrides.
+        self._env_file_used = values.get("_env_file", self.model_config.get("env_file"))
+        self._explicit = {k: v for k, v in values.items() if not k.startswith("_")}
 
     # --- Dialpad ---------------------------------------------------------------------------
     DIALPAD_CLIENT_ID: str = "dev-client-id"
@@ -35,15 +45,12 @@ class Settings(BaseSettings):
     CHANGELOG_LIFECYCLE_ACTIONS: str = "target_created,target_deleted"
 
     # --- Connector and features ------------------------------------------------------------
+    # Names registered under the framework_sanic.connectors / framework_sanic.features entry points.
     CONNECTOR: str = "fake"
     FEATURES: str = ""
     CONNECTOR_RATE_LIMIT_PER_MINUTE: int = 600
     # VERIFY: default behaviour for unknown callers.
     UNKNOWN_CALLER_POLICY: Literal["log_unassociated", "create_contact", "skip"] = "log_unassociated"
-    HUBSPOT_CLIENT_ID: str = ""
-    HUBSPOT_CLIENT_SECRET: SecretStr = SecretStr("")
-    HUBSPOT_API_BASE: str = "https://api.hubapi.com"
-    HUBSPOT_PORTAL_ID: str = ""
 
     # --- Infrastructure --------------------------------------------------------------------
     # "memory" | "sqlalchemy" | "datastore", or "package.module:factory" for your own adapter:
@@ -79,6 +86,8 @@ class Settings(BaseSettings):
     CONTACT_CACHE_SECONDS: int = 30
     SWEEP_TICK_SECONDS: int = 600
     LOG_LEVEL: str = "INFO"
+    # Directory with the built UI (index.html + assets/) served at /app/. Default: the build
+    # shipped inside the package (framework_sanic/ui_dist), when present.
     SERVE_UI_DIR: str | None = Field(
         default=None, description="VERIFY: static hosting vs served by the service"
     )
@@ -114,3 +123,30 @@ class Settings(BaseSettings):
     @property
     def activity_ttl_seconds(self) -> float:
         return self.ACTIVITY_TTL_DAYS * 86400.0
+
+
+class PluginSettings(BaseSettings):
+    """Base for settings a connector or feature owns. Subclasses set an ``env_prefix``::
+
+        class HubSpotSettings(PluginSettings):
+            model_config = SettingsConfigDict(env_prefix="HUBSPOT_")
+            client_id: str = ""
+
+    and load them with ``load_settings(HubSpotSettings, settings)`` (or ``ctx.settings(...)``).
+    """
+
+    model_config = SettingsConfigDict(extra="ignore", frozen=True)
+
+
+def load_settings[P: BaseSettings](cls: type[P], base: Settings) -> P:
+    """Load plugin settings the way ``base`` was loaded: environment variables, then the same .env
+    file (none in tests). Prefixed keys passed explicitly to ``Settings(...)`` win, so tests can
+    write ``make_settings(HUBSPOT_PORTAL_ID="42")``."""
+    prefix = str(cls.model_config.get("env_prefix") or "").upper()
+    fields = {name.lower(): name for name in cls.model_fields}
+    overrides: dict[str, Any] = {}
+    for key, value in base._explicit.items():
+        upper = key.upper()
+        if prefix and upper.startswith(prefix) and upper[len(prefix) :].lower() in fields:
+            overrides[fields[upper[len(prefix) :].lower()]] = value
+    return cls(_env_file=base._env_file_used, **overrides)

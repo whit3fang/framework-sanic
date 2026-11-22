@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // Runs against the fake Dialpad harness: `docker compose up`, `pnpm dev`, then `pnpm e2e`.
-// E2E_ID_TOKEN must be signed with the harness DIALPAD_CLIENT_SECRET (see tools/fake_dialpad.py).
+// E2E_ID_TOKEN must be signed with the harness DIALPAD_CLIENT_SECRET (see `framework-sanic replay dev-token`).
 test("contact card, rematch confirmation and note", async ({ page }) => {
   const token = process.env.E2E_ID_TOKEN;
   test.skip(!token, "E2E_ID_TOKEN not set");

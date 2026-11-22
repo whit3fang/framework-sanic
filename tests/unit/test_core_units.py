@@ -15,7 +15,7 @@ from framework_sanic.core.services.crypto import EnvelopeCipher
 from framework_sanic.core.services.phone import phone_variants, to_e164
 from framework_sanic.core.services.rate_limit import RateLimiter
 from framework_sanic.core.services.session_service import Principal, SessionService
-from tests.conftest import FakeClock, make_settings
+from framework_sanic.testing import FakeClock, make_settings
 
 
 class CountingProvider(LocalKeyProvider):
@@ -137,15 +137,27 @@ def test_features_load_and_integration_feature() -> None:
     assert bare.reconciler.config.subscription_kinds == ()
 
 
-def test_feature_name_resolution() -> None:
-    from framework_sanic.core.features.context import resolve_feature_module as r
+def test_feature_and_connector_discovery() -> None:
+    """Features and connectors are found by entry point; dotted module paths work for features."""
+    from framework_sanic.bootstrap import installed_connectors, make_connector
+    from framework_sanic.core.features.context import installed_features, load_feature
 
-    assert r("platform") == "framework_sanic.core.features.platform"
-    assert r("call_logging") == "framework_sanic.features.call_logging"
-    assert r("sms_logging") == "framework_sanic.features.sms_logging"
-    assert r("hubspot.sms_campaign") == "framework_sanic.connectors.hubspot.features.sms_campaign"
-    assert r("fake.dev_harness") == "framework_sanic.stubs.connector.features.dev_harness"
-    assert r("tests.support.echo_feature") == "tests.support.echo_feature"
+    assert {"call_logging", "sms_logging", "fake.dev_harness", "hubspot.sms_campaign"} <= set(
+        installed_features()
+    )
+    assert {"fake", "hubspot"} <= set(installed_connectors())
+    assert load_feature("platform").name == "platform"
+    assert load_feature("call_logging").name == "call_logging"
+    assert load_feature("hubspot.sms_campaign").name == "hubspot.sms_campaign"  # integration package
+    assert load_feature("tests.support.echo_feature").name == "echo"
+    for bad in ("nope", "nope.feature", "framework_sanic.sdk"):
+        with pytest.raises(ConfigurationError):
+            load_feature(bad)
+    assert make_connector(make_settings(CONNECTOR="hubspot")).name == "hubspot"
+    assert make_connector(make_settings(CONNECTOR="framework_sanic.stubs.connector:make")).name == "fake"
+    for bad in ("nope", "framework_sanic.sdk:Settings", "no.such.module:make"):
+        with pytest.raises(ConfigurationError):
+            make_connector(make_settings(CONNECTOR=bad))
 
 
 async def test_scheduler_runs_jobs() -> None:

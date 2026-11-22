@@ -15,7 +15,7 @@ from framework_sanic.core.domain.errors import NotConnected, Unauthorized
 from framework_sanic.core.ports.platform import PlatformIdentity
 from framework_sanic.core.ports.queue import TOPIC_CONTROL
 from framework_sanic.stubs.dialpad_tokens import make_dev_id_token
-from tests.conftest import Harness
+from framework_sanic.testing import Harness
 
 
 async def test_admin_connect_flow(harness: Harness) -> None:

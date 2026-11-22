@@ -7,6 +7,12 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "framework-sanic",
+    "framework-sanic-hubspot",
+]
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -431,22 +437,31 @@ name = "framework-sanic"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aiosqlite" },
     { name = "cryptography" },
-    { name = "google-cloud-datastore" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
-    { name = "redis" },
     { name = "sanic" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
 [package.optional-dependencies]
+dev-stack = [
+    { name = "aiosqlite" },
+    { name = "redis" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
 gcp = [
+    { name = "google-cloud-datastore" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-pubsub" },
+]
+redis = [
+    { name = "redis" },
+]
+sql = [
+    { name = "aiosqlite" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 testing = [
     { name = "pytest" },
@@ -456,6 +471,7 @@ testing = [
 [package.dev-dependencies]
 dev = [
     { name = "fakeredis", extra = ["lua"] },
+    { name = "framework-sanic-hubspot" },
     { name = "hypothesis" },
     { name = "mypy" },
     { name = "pytest" },
@@ -466,9 +482,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "aiosqlite", marker = "extra == 'sql'", specifier = ">=0.22.1" },
     { name = "cryptography", specifier = ">=50.0.2" },
-    { name = "google-cloud-datastore", specifier = ">=2.27.1" },
+    { name = "framework-sanic", extras = ["redis", "sql"], marker = "extra == 'dev-stack'" },
+    { name = "google-cloud-datastore", marker = "extra == 'gcp'", specifier = ">=2.27.1" },
     { name = "google-cloud-kms", marker = "extra == 'gcp'", specifier = ">=3.19.0" },
     { name = "google-cloud-pubsub", marker = "extra == 'gcp'", specifier = ">=2.44.0" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -477,21 +494,37 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.15.1" },
     { name = "pytest", marker = "extra == 'testing'", specifier = ">=9.2.0" },
     { name = "pytest-asyncio", marker = "extra == 'testing'", specifier = ">=1.5.0" },
-    { name = "redis", specifier = ">=5" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=5" },
     { name = "sanic", specifier = ">=25.12.1" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sql'", specifier = ">=2.1.9" },
 ]
-provides-extras = ["testing", "gcp"]
+provides-extras = ["gcp", "redis", "sql", "dev-stack", "testing"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.40.0" },
+    { name = "framework-sanic-hubspot", editable = "integrations/hubspot" },
     { name = "hypothesis", specifier = ">=6.170.17" },
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-asyncio", specifier = ">=1.5.0" },
     { name = "ruff", specifier = ">=0.17.6" },
     { name = "sanic-testing", specifier = ">=24.6.0" },
+]
+
+[[package]]
+name = "framework-sanic-hubspot"
+version = "0.1.0"
+source = { editable = "integrations/hubspot" }
+dependencies = [
+    { name = "framework-sanic" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "framework-sanic", editable = "." },
+    { name = "httpx", specifier = ">=0.28.1" },
 ]
 
 [[package]]

@@ -1,12 +1,12 @@
 """HubSpot SMS campaign feature: specified separately and out of scope for this build.
 
-Kept as a placeholder to show where an integration feature lives. Enable with
+Kept as a placeholder to show where an integration's own feature lives. Enable with
 ``FEATURES=hubspot.sms_campaign``; it registers nothing yet.
 """
 
 from __future__ import annotations
 
-from framework_sanic.core.features.context import FeatureContext
+from framework_sanic.sdk import FeatureContext
 
 
 class SmsCampaignFeature:

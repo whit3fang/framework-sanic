@@ -22,7 +22,7 @@ describe("NotesPanel", () => {
 
 describe("RematchDialog", () => {
   it("requires the forward-only confirmation before rematching", async () => {
-    const entity = { ref: { object_type: "contact", id: "7" }, properties: { name: "Bob" } };
+    const entity = { external_id: "7", external_type: "contact", properties: { name: "Bob" } };
     const api = { searchContacts: vi.fn().mockResolvedValue({ results: [entity] }), rematch: vi.fn().mockResolvedValue({}) };
     const w = mount(RematchDialog, { props: { api: api as never, dialpadRef: "phone:+1", manifest } });
     await w.find("[data-test=search]").setValue("Bob");
@@ -33,7 +33,7 @@ describe("RematchDialog", () => {
     expect(w.find("[data-test=forward-only]").text()).toContain("future calls");
     await w.find("[data-test=confirm]").trigger("click");
     await flushPromises();
-    expect(api.rematch).toHaveBeenCalledWith("phone:+1", entity.ref);
+    expect(api.rematch).toHaveBeenCalledWith("phone:+1", entity);
     expect(w.emitted("done")).toHaveLength(1);
   });
 });

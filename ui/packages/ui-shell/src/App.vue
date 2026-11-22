@@ -100,7 +100,6 @@ onUnmounted(() => stopListening?.());
             v-else-if="contact.data.value"
             :entity="contact.data.value.entity"
             :manifest="contact.data.value.manifest"
-            :linked="contact.data.value.linked"
             @rematch="rematching = true"
           />
           <NotesPanel v-if="notesEnabled" :api="store.api" :call-id="store.call.callId" :dialpad-ref="ref_" />

@@ -8,7 +8,6 @@ import type {
   AuthorizeOut,
   ContactOut,
   Entity,
-  EntityRef,
   NoteOut,
   RematchOut,
   SearchOut,
@@ -79,9 +78,14 @@ export function createClient({ baseUrl, fetchImpl = fetch }: ClientOptions) {
     getContact: (dialpadRef: string, phone?: string) =>
       request<ContactOut>("GET", "/contact", { query: { dialpad_ref: dialpadRef, ...(phone ? { phone } : {}) } }),
     searchContacts: (q: string) => request<SearchOut>("GET", "/contact/search", { query: { q } }),
-    rematch: (dialpadRef: string, entityRef: EntityRef) =>
+    rematch: (dialpadRef: string, entity: Pick<Entity, "external_id" | "external_type">) =>
       request<RematchOut>("POST", "/contact/rematch", {
-        body: { dialpad_ref: dialpadRef, entity_ref: entityRef, confirm_forward_only: true },
+        body: {
+          dialpad_ref: dialpadRef,
+          external_id: entity.external_id,
+          external_type: entity.external_type,
+          confirm_forward_only: true,
+        },
       }),
     createContact: (dialpadRef: string, properties: Record<string, string>) =>
       request<Entity>("POST", "/contact", { body: { dialpad_ref: dialpadRef, properties } }),

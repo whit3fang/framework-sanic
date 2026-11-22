@@ -149,7 +149,7 @@ def classify_event(payload: dict[str, Any]) -> str | None:
 
 
 def contact_ref_from_party(party: Party | None, fallback_number: str | None) -> str | None:
-    """Dialpad contact reference used to key ContactLink: contact id if known, else the number."""
+    """Dialpad contact reference used as the ``EntityMap`` dialpad id: contact id if known, else the number."""
     if party and party.id:
         return f"contact:{party.id}"
     number = (party.phone if party else None) or fallback_number

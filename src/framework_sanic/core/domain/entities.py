@@ -13,23 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from .records import Key, Record
 
 
-class ExternalRef(BaseModel):
-    """Reference to a record in the external service (e.g. a HubSpot call object)."""
-
-    model_config = ConfigDict(frozen=True)
-    system: str
-    object_type: str
-    id: str
-
-
-class EntityRef(BaseModel):
-    """Reference to an external contact-like entity."""
-
-    model_config = ConfigDict(frozen=True)
-    object_type: str
-    id: str
-
-
 class Entity(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -141,24 +124,29 @@ class Subscription(Entity):
         return (self.company_id, self.target_type, self.target_id, self.kind)
 
 
-class ContactLinkHistoryItem(BaseModel):
-    entity_ref: EntityRef
-    linked_by: str
-    linked_at: float
+class EntityMap(Entity):
+    """A Dialpad object and the external record that stands for it, one per Dialpad id.
 
+    ``dialpad_id`` is either a Dialpad contact (``contact:<id>`` or ``phone:<number>``) mapped to a
+    CRM contact, or an activity key (``dialpad:<company>:call|sms|note:<id>``) mapped to the
+    record the integration logged for it. ``external_type`` is whatever the integration uses
+    ("contact", "lead", "calls", "communications", ...).
 
-class ContactLink(Entity):
-    """Rematch target for a Dialpad contact. Forward-only: affects future activities only."""
+    Contact maps are written by matching (automatic or rematch, treated the same) and stay until
+    the next rematch. Activities keep a copy of the contact map they were logged with, so a
+    rematch only affects future activities. Connectors build maps without ``company_id``; the
+    framework fills it when storing.
+    """
 
-    KIND: ClassVar[str] = "ContactLink"
-    dialpad_contact_ref: str
-    entity_ref: EntityRef
-    linked_by: str
-    linked_at: float
-    history: list[ContactLinkHistoryItem] = Field(default_factory=list)
+    KIND: ClassVar[str] = "EntityMap"
+    company_id: str = ""
+    dialpad_id: str
+    external_id: str
+    external_type: str
+    updated_at: float = 0.0
 
     def key(self) -> Key:
-        return (self.company_id, self.dialpad_contact_ref)
+        return (self.company_id, self.dialpad_id)
 
 
 class OutboxEntry(Entity):
@@ -195,7 +183,7 @@ ALL_ENTITIES: tuple[type[Entity], ...] = (
     User,
     Target,
     Subscription,
-    ContactLink,
+    EntityMap,
     OutboxEntry,
     AuditEvent,
 )

@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field
 
-from framework_sanic.core.domain.entities import Entity, EntityRef, ExternalRef
+from framework_sanic.core.domain.entities import Entity, EntityMap
 from framework_sanic.core.domain.records import Key
 
 
@@ -26,8 +26,7 @@ class SmsActivity(Entity):
     message_status: str | None = None
     expires_at: float | None = None
     synced: bool = False
-    external_ref: ExternalRef | None = None
-    external_contact_ref: EntityRef | None = None
+    contact: EntityMap | None = None  # copy of the contact map used when logged
 
     def key(self) -> Key:
         return (self.company_id, self.sms_id)

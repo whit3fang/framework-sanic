@@ -1,14 +1,18 @@
 """Composition root: turns Settings into adapters, services, features, workers and schedules.
 
-Adapters are swappable by config (STORAGE_ADAPTER, QUEUE_ADAPTER, CACHE_URL, KMS_KEY, CONNECTOR,
-PLATFORM_ADAPTER). Tests pass explicit adapter instances through ``overrides``.
+Adapters are swappable by config (STORAGE_ADAPTER, QUEUE_ADAPTER, CACHE_URL, KMS_KEY,
+PLATFORM_ADAPTER). Connectors and features are plugins found through entry points
+(``framework_sanic.connectors`` / ``framework_sanic.features``), so an integration package is
+picked up by being installed. Tests pass explicit adapter instances through ``overrides``.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import importlib
+import importlib.util
 import logging
+from importlib.metadata import entry_points
 from typing import Any
 
 from framework_sanic.adapters.changelog.noop import NoopChangeLogSource
@@ -32,18 +36,48 @@ log = logging.getLogger(__name__)
 
 
 BUILTIN_STORAGE = ("memory", "sqlalchemy", "datastore")
+# Top-level modules each extra provides (see [project.optional-dependencies]).
+EXTRA_MODULES: dict[str, tuple[str, ...]] = {
+    "gcp": ("google.cloud.datastore", "google.cloud.pubsub_v1", "google.cloud.kms"),
+    "redis": ("redis",),
+    "sql": ("sqlalchemy", "aiosqlite"),
+}
+
+
+def _installed(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except ModuleNotFoundError:  # a parent package (e.g. google.cloud) is missing
+        return False
+
+
+def require_extra(extra: str, setting: str, *modules: str) -> None:
+    """Fail with an actionable message when the client library behind ``setting`` is missing."""
+    missing = [m for m in modules or EXTRA_MODULES[extra] if not _installed(m)]
+    if missing:
+        raise ConfigurationError(
+            f"{setting} needs the '{extra}' extra (missing: {', '.join(missing)}): "
+            f"pip install 'framework-sanic[{extra}]' (in this repository: uv sync --all-extras)"
+        )
+
+
+CONNECTOR_ENTRY_POINTS = "framework_sanic.connectors"
+
+
+def load_factory(setting: str, path: str) -> Any:
+    """Load ``package.module:attr``; configuration errors name the setting."""
+    module_name, _, attr = path.partition(":")
+    try:
+        return getattr(importlib.import_module(module_name), attr)
+    except (ImportError, AttributeError) as exc:
+        raise ConfigurationError(f"{setting} {path!r} cannot be loaded: {exc}") from exc
 
 
 def make_repository(settings: Settings, clock: Any) -> Repository:
     """Built-in adapters by name, or ``package.module:factory`` -> ``factory(settings, clock)``."""
     name = settings.STORAGE_ADAPTER
     if ":" in name:
-        module_name, _, attr = name.partition(":")
-        try:
-            factory = getattr(importlib.import_module(module_name), attr)
-        except (ImportError, AttributeError) as exc:
-            raise ConfigurationError(f"STORAGE_ADAPTER {name!r} cannot be loaded: {exc}") from exc
-        repo = factory(settings, clock)
+        repo = load_factory("STORAGE_ADAPTER", name)(settings, clock)
         if not isinstance(repo, Repository):
             raise ConfigurationError(
                 f"STORAGE_ADAPTER {name!r} returned {type(repo).__name__}, which does not implement "
@@ -59,9 +93,11 @@ def make_repository(settings: Settings, clock: Any) -> Repository:
 
         return MemoryRepository(clock)
     if name == "sqlalchemy":
+        require_extra("sql", f"STORAGE_ADAPTER={name}", "sqlalchemy", "aiosqlite")
         from framework_sanic.adapters.storage.sqlalchemy.repository import SqlAlchemyRepository
 
         return SqlAlchemyRepository(settings.DATABASE_URL, clock=clock)
+    require_extra("gcp", f"STORAGE_ADAPTER={name}", "google.cloud.datastore")
     from framework_sanic.adapters.storage.datastore.repository import DatastoreRepository
 
     return DatastoreRepository(
@@ -74,6 +110,7 @@ def make_queue(settings: Settings) -> Any:
         from framework_sanic.adapters.queue.memory import MemoryQueue
 
         return MemoryQueue(settings.SHARD_COUNT)
+    require_extra("gcp", f"QUEUE_ADAPTER={settings.QUEUE_ADAPTER}", "google.cloud.pubsub_v1")
     from framework_sanic.adapters.queue.pubsub import PubSubQueue
 
     return PubSubQueue(
@@ -89,6 +126,7 @@ def make_cache(settings: Settings) -> Any:
         from framework_sanic.adapters.cache.memory import MemoryCache
 
         return MemoryCache()
+    require_extra("redis", "CACHE_URL=redis://...", "redis")
     from framework_sanic.adapters.cache.redis import RedisCache
 
     return RedisCache(settings.CACHE_URL)
@@ -96,6 +134,7 @@ def make_cache(settings: Settings) -> Any:
 
 def make_key_provider(settings: Settings) -> Any:
     if settings.KMS_KEY:
+        require_extra("gcp", "KMS_KEY", "google.cloud.kms")
         from framework_sanic.adapters.kms.gcp_kms import GcpKmsKeyProvider
 
         return GcpKmsKeyProvider(settings.KMS_KEY)
@@ -119,21 +158,34 @@ def make_platform(settings: Settings) -> Any:
     )
 
 
+def installed_connectors() -> list[str]:
+    return sorted(ep.name for ep in entry_points(group=CONNECTOR_ENTRY_POINTS))
+
+
 def make_connector(settings: Settings) -> Connector:
-    if settings.CONNECTOR == "fake":
-        from framework_sanic.stubs.connector.connector import FakeConnector
-
-        return FakeConnector()
-    if settings.CONNECTOR == "hubspot":
-        from framework_sanic.connectors.hubspot.connector import HubSpotConnector
-
-        return HubSpotConnector(
-            client_id=settings.HUBSPOT_CLIENT_ID,
-            client_secret=settings.HUBSPOT_CLIENT_SECRET.get_secret_value(),
-            api_base=settings.HUBSPOT_API_BASE,
-            portal_id=settings.HUBSPOT_PORTAL_ID,
+    """``CONNECTOR`` names an installed connector (entry point) or a ``package.module:factory``.
+    The factory is called as ``factory(settings)`` and loads its own settings."""
+    name = settings.CONNECTOR
+    eps = {ep.name: ep for ep in entry_points(group=CONNECTOR_ENTRY_POINTS)}
+    if name in eps:
+        try:
+            factory = eps[name].load()
+        except (ImportError, AttributeError) as exc:
+            raise ConfigurationError(f"CONNECTOR {name!r} cannot be loaded: {exc}") from exc
+    elif ":" in name:
+        factory = load_factory("CONNECTOR", name)
+    else:
+        raise ConfigurationError(f"unknown CONNECTOR {name!r}; installed: {installed_connectors()}")
+    try:
+        connector = factory(settings)
+    except TypeError as exc:  # e.g. a class or a function with another signature
+        raise ConfigurationError(f"CONNECTOR {name!r} must be callable as factory(settings): {exc}") from exc
+    if not isinstance(connector, Connector):
+        raise ConfigurationError(
+            f"CONNECTOR {name!r} returned {type(connector).__name__}, which does not implement the "
+            "Connector port (framework_sanic.sdk.Connector)"
         )
-    raise ConfigurationError(f"unknown CONNECTOR {settings.CONNECTOR!r}")
+    return connector
 
 
 def build_services(settings: Settings | None = None, **overrides: Any) -> Services:

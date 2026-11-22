@@ -15,7 +15,7 @@ import pytest
 
 from framework_sanic.bootstrap import startup
 from framework_sanic.http.adapters.sanic import create_app
-from tests.conftest import Harness, build_harness, call_event, sms_event
+from framework_sanic.testing import Harness, build_harness, call_event, sms_event
 
 ADAPTERS = ["sanic", "neutral"]
 
@@ -179,9 +179,13 @@ async def test_contact_lookup_rematch_create(client: Client) -> None:
         "GET", "/contact", headers=bearer(token), params={"dialpad_ref": "phone:+14155550100"}
     )
     assert r.status == 200, r.text
-    assert r.json()["entity"]["ref"]["id"] == ada.ref.id and r.json()["manifest"]["fields"]
+    assert r.json()["entity"]["external_id"] == ada.external_id and r.json()["manifest"]["fields"]
 
-    rematch = {"dialpad_ref": "phone:+14155550100", "entity_ref": bob.ref.model_dump()}
+    rematch = {
+        "dialpad_ref": "phone:+14155550100",
+        "external_type": "contact",
+        "external_id": bob.external_id,
+    }
     r = await client.request("POST", "/contact/rematch", headers=bearer(token), body=json.dumps(rematch))
     assert r.status == 422  # must confirm forward-only behaviour
     r = await client.request(
@@ -191,13 +195,14 @@ async def test_contact_lookup_rematch_create(client: Client) -> None:
         body=json.dumps({**rematch, "confirm_forward_only": True}),
     )
     assert r.status == 200 and r.json()["applies_to"] == "future_activities_only"
+    assert r.json()["external_id"] == bob.external_id
     r = await client.request(
         "GET", "/contact", headers=bearer(token), params={"dialpad_ref": "phone:+14155550100"}
     )
-    assert r.json()["entity"]["ref"]["id"] == bob.ref.id and r.json()["linked"] is True
+    assert r.json()["entity"]["external_id"] == bob.external_id
 
     r = await client.request("GET", "/contact/search", headers=bearer(token), params={"q": "Ada"})
-    assert [e["ref"]["id"] for e in r.json()["results"]] == [ada.ref.id]
+    assert [e["external_id"] for e in r.json()["results"]] == [ada.external_id]
 
     r = await client.request(
         "POST",
@@ -207,7 +212,7 @@ async def test_contact_lookup_rematch_create(client: Client) -> None:
             {"dialpad_ref": "phone:+15550009999", "properties": {"name": "New", "phone": "+15550009999"}}
         ),
     )
-    assert r.status == 201 and r.json()["ref"]["id"]
+    assert r.status == 201 and r.json()["external_id"]
 
 
 async def test_contact_validation(client: Client) -> None:
@@ -270,3 +275,29 @@ async def test_sms_text_never_in_responses_or_storage(client: Client) -> None:
     assert r.status == 200 and "TOP SECRET" not in r.text
     published = json.dumps([m.model_dump(mode="json") for m in client.h.queue.published])
     assert "TOP SECRET" not in published
+
+
+@pytest.mark.parametrize("source", ["setting", "packaged", "none"])
+async def test_ui_is_served_from_the_package_or_setting(
+    source: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The built UI ships in the package (framework_sanic/ui_dist); SERVE_UI_DIR overrides it."""
+    import framework_sanic.http.adapters.sanic as sanic_adapter
+
+    ui = tmp_path / "ui"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<!doctype html><title>shell</title>")
+    (ui / "assets" / "app.js").write_text("console.log(1)")
+    monkeypatch.setattr(
+        sanic_adapter, "PACKAGED_UI_DIR", str(ui) if source == "packaged" else str(tmp_path / "no")
+    )
+    h = build_harness(SERVE_UI_DIR=str(ui) if source == "setting" else None)
+    app = create_app(services=h.services, name=f"t_{uuid.uuid4().hex[:10]}", embedded_workers=False)
+    _, index = await app.asgi_client.get("/app/")
+    _, asset = await app.asgi_client.get("/app/assets/app.js")
+    if source == "none":
+        assert index.status == 404
+        return
+    assert index.status == 200 and "shell" in index.text
+    assert "frame-ancestors" in index.headers["content-security-policy"]
+    assert asset.status == 200 and "console.log" in asset.text

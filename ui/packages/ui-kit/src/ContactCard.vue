@@ -9,14 +9,14 @@ import { computed } from "vue";
 import FieldValue from "./FieldValue.vue";
 import { safeHttpUrl } from "./safe";
 
-const props = defineProps<{ entity: Entity | null; manifest: UiManifest; linked?: boolean }>();
+const props = defineProps<{ entity: Entity | null; manifest: UiManifest }>();
 defineEmits<{ rematch: []; create: [] }>();
 
 const link = computed(() => {
   if (!props.entity) return null;
   if (props.entity.url) return safeHttpUrl(props.entity.url);
   const tpl = props.manifest.link_out_template;
-  return tpl ? safeHttpUrl(tpl.replace("{id}", encodeURIComponent(props.entity.ref.id))) : null;
+  return tpl ? safeHttpUrl(tpl.replace("{id}", encodeURIComponent(props.entity.external_id))) : null;
 });
 
 const rows = computed(() =>
@@ -30,7 +30,6 @@ const rows = computed(() =>
   <section class="contact-card" aria-live="polite">
     <header>
       <h2>{{ manifest.object_label }}</h2>
-      <span v-if="linked" class="badge" title="Matched manually">linked</span>
     </header>
     <template v-if="entity">
       <dl>
@@ -57,7 +56,6 @@ const rows = computed(() =>
 .contact-card { font: 14px/1.4 system-ui, sans-serif; padding: 12px; }
 header { display: flex; align-items: center; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
-.badge { font-size: 11px; background: #eef; border-radius: 4px; padding: 0 6px; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
 dt { color: #666; }
 dd { margin: 0; overflow-wrap: anywhere; }

@@ -1,0 +1,13 @@
+.git
+.venv
+.local
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.hypothesis
+**/node_modules
+src/framework_sanic/ui_dist
+*.db
+.env
+.idea

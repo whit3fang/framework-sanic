@@ -1,0 +1,73 @@
+# CI/CD template for an integration (copy to .github/workflows/ and fill in the env block).
+# Gates: lint, types, tests, `framework-sanic check`, UI build; then image, indexes and deploy.
+name: integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  INTEGRATION: integrations/hubspot           # path of the integration package
+  NAME: hubspot
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev/my-gcp-project/integrations
+  GCP_PROJECT: my-gcp-project
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.13.9" }
+      - run: uv sync --frozen --all-extras --all-packages
+      - run: uv run ruff check src tests integrations
+      - run: uv run mypy
+      - run: uv run mypy src/framework_sanic/core --strict
+      - run: uv run pytest -q
+      - run: uv run framework-sanic check "$INTEGRATION"
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "9.15.0" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: pnpm, cache-dependency-path: ui/pnpm-lock.yaml }
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui typecheck && pnpm -C ui test && pnpm -C ui build
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: [check, ui]
+    runs-on: ubuntu-latest
+    permissions: { contents: read, id-token: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
+      - name: Build images
+        run: |
+          docker build --target base -t framework-sanic-base .
+          docker build -f docker/integration.Dockerfile --build-arg BASE_IMAGE=framework-sanic-base \
+            --build-arg INTEGRATION="$INTEGRATION" -t "$REGISTRY/$NAME:$GITHUB_SHA" .
+          docker push "$REGISTRY/$NAME:$GITHUB_SHA"
+          echo "IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/$NAME:$GITHUB_SHA")" >> "$GITHUB_ENV"
+      - name: Datastore indexes for the enabled features
+        run: |
+          docker run --rm --user "$(id -u)" -e FEATURES -e CONNECTOR -v "$PWD:/out" -w /out "$IMAGE" \
+            framework-sanic export-indexes --out /out/index.yaml
+          gcloud datastore indexes create index.yaml --project "$GCP_PROJECT" --quiet
+        env:
+          CONNECTOR: hubspot
+          FEATURES: call_logging,sms_logging
+      - uses: hashicorp/setup-terraform@v3
+      - name: Deploy
+        working-directory: deploy/terraform/examples/hubspot   # your environment's root module
+        run: terraform init -input=false && terraform apply -input=false -auto-approve -var "image=$IMAGE"

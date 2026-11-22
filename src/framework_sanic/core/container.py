@@ -17,6 +17,7 @@ from .services.company_service import CompanyService
 from .services.contact_service import ContactService
 from .services.credential_service import DialpadCredentialService, ExternalCredentialService, PlatformGateway
 from .services.crypto import EnvelopeCipher
+from .services.entity_map_service import EntityMapService
 from .services.rate_limit import RateLimiter
 from .services.session_service import OAuthStateStore, SessionService
 from .services.subscription_reconciler import ReconcilerConfig, SubscriptionReconciler
@@ -50,6 +51,7 @@ class Services:
     oauth_states: OAuthStateStore
     targets: TargetService
     contacts: ContactService
+    entity_maps: EntityMapService
     companies: CompanyService
     reconciler: SubscriptionReconciler
     features: FeatureRegistry | None = field(default=None)
@@ -82,6 +84,7 @@ class Services:
             token_store, connector.auth, connector.name, cache, clock
         )
         targets = TargetService(repo)
+        entity_maps = EntityMapService(repo, clock)
         base = settings.PUBLIC_BASE_URL.rstrip("/")
         reconciler = SubscriptionReconciler(
             repo,
@@ -121,8 +124,9 @@ class Services:
             ),
             oauth_states=OAuthStateStore(cache),
             targets=targets,
+            entity_maps=entity_maps,
             contacts=ContactService(
-                repo,
+                entity_maps,
                 connector,
                 external_credentials,
                 cache,

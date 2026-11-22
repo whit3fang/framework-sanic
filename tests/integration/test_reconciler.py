@@ -18,7 +18,7 @@ from framework_sanic.core.services.subscription_reconciler import (
     sweep_slot,
 )
 from framework_sanic.core.services.target_hierarchy import compute_effective
-from tests.conftest import Harness
+from framework_sanic.testing import Harness
 
 
 def remote_keys(h: Harness, company: str = "c1") -> Counter[tuple[str, str | None, str | None]]:

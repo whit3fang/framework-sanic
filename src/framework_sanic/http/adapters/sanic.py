@@ -24,6 +24,9 @@ from framework_sanic.http.routes import HttpRequest, HttpResponse, RouteSpec
 log = logging.getLogger(__name__)
 
 
+PACKAGED_UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ui_dist")
+
+
 def _sanic_path(path: str) -> str:
     return re.sub(r"\{(\w+)\}", r"<\1:str>", path)
 
@@ -90,8 +93,11 @@ def create_app(
                 _make_options(http_app, spec), uri, methods=["OPTIONS"], name=f"OPTIONS_{spec.name}"
             )
 
-    ui_dir = settings.SERVE_UI_DIR
-    if ui_dir and os.path.isdir(ui_dir):  # VERIFY: static hosting vs served by the service
+    # The prebuilt UI ships in the package (`pnpm -C ui build`); SERVE_UI_DIR overrides it.
+    ui_dir = settings.SERVE_UI_DIR or PACKAGED_UI_DIR
+    if ui_dir and os.path.isfile(
+        os.path.join(ui_dir, "index.html")
+    ):  # VERIFY: static hosting vs served by the service
         index = os.path.join(ui_dir, "index.html")
 
         async def ui_index(request: Request) -> HTTPResponse:

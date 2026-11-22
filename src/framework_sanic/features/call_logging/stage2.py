@@ -6,8 +6,8 @@ Parking, credentials, rate limits, leases and error mapping come from the framew
 * Parked companies (invalid Dialpad connection, or no usable external credential) are deferred
   without counting attempts; stage 1 keeps flowing and messages resume after reconnect.
 * Per-connector, per-company token bucket; 429s honour Retry-After with jitter.
-* Idempotency: the activity key is stored as an external reference and ``find_by_reference`` runs
-  before any create, so duplicate deliveries never create a second external record. A short
+* Idempotency: the logged record is an ``EntityMap`` keyed by the activity key, and
+  ``find_by_reference`` (the reference stored on the CRM record) runs before any create, so duplicate deliveries never create a second external record. A short
   lease is a fast path that also covers concurrent duplicate deliveries.
 """
 
@@ -17,7 +17,7 @@ import logging
 from typing import Any, cast
 
 from framework_sanic.core.container import Services
-from framework_sanic.core.domain.entities import EntityRef, ExternalRef
+from framework_sanic.core.domain.entities import EntityMap
 from framework_sanic.core.domain.records import Record
 from framework_sanic.core.features.guards import SyncGuards
 from framework_sanic.core.features.jobs import ACK, JobResult, deadletter, retry
@@ -25,6 +25,7 @@ from framework_sanic.core.ports.queue import QueueMessage
 
 from .merge import sync_view_hash
 from .models import CallActivity, Note
+from .policy import CallLoggingSettings, CallLogPolicy
 from .port import CallLoggingConnector
 
 log = logging.getLogger(__name__)
@@ -34,10 +35,11 @@ MAX_NOTE_ATTEMPTS = 60
 
 
 class Stage2:
-    def __init__(self, services: Services) -> None:
+    def __init__(self, services: Services, policy: CallLogPolicy | None = None) -> None:
         self.s = services
         self.connector = cast(CallLoggingConnector, services.connector)  # checked in feature setup
         self.guards = SyncGuards(services)
+        self.policy = policy or CallLogPolicy(CallLoggingSettings(), services.connector)
 
     # --- calls ------------------------------------------------------------------------------
     async def sync_call(self, msg: QueueMessage) -> JobResult:
@@ -50,7 +52,12 @@ class Stage2:
             return ACK
         view = sync_view_hash(act)
         pending = sorted(set(act.recording_urls) - set(act.synced_recordings))
-        if act.external_ref and act.synced_hash == view and not pending:
+        logged = await self.s.entity_maps.get(msg.company_id, act.activity_key)
+        if logged and act.synced_hash == view and not pending:
+            return ACK
+        if logged is None and not self.policy.should_log(act):
+            if act.synced_hash != view:  # remember the decision for this version of the call
+                await self._save_call_sync(key, None, view, [])
             return ACK
 
         cred = await self.guards.check(msg, act.owner_user_id)
@@ -60,7 +67,7 @@ class Stage2:
         if not await self.guards.lease(lease):
             return retry(2.0, "sync in progress", count_attempt=False)
         try:
-            contact = act.external_contact_ref
+            contact = act.contact
             if contact is None:
                 contact = await self.s.contacts.resolve_or_create(
                     msg.company_id,
@@ -70,16 +77,17 @@ class Stage2:
                     create_if_unknown=self.s.settings.UNKNOWN_CALLER_POLICY == "create_contact",
                 )
                 if contact is None and self.s.settings.UNKNOWN_CALLER_POLICY == "skip":
-                    await self._save_call_sync(key, None, None, view, pending)
+                    await self._save_call_sync(key, None, view, pending)
                     return ACK
-            ref = act.external_ref or await self.connector.find_by_reference(cred, act.activity_key)
-            if ref is None or act.synced_hash != view:
-                to_send = act.model_copy(update={"external_ref": ref, "external_contact_ref": contact})
-                ref = await self.connector.upsert_call(cred, to_send)
-            if "recordings" in self.connector.capabilities:
+            logged = logged or await self.connector.find_by_reference(cred, act.activity_key)
+            if logged is None or act.synced_hash != view:
+                to_send = act.model_copy(update={"contact": contact})
+                logged = await self.connector.upsert_call(cred, to_send, logged)
+            logged = await self.s.entity_maps.save(msg.company_id, logged, dialpad_id=act.activity_key)
+            if "recordings" in self.connector.capabilities and self.policy.settings.recordings:
                 for url in pending:
-                    await self.connector.attach_recording(cred, ref, url)
-            await self._save_call_sync(key, ref, contact, view, pending)
+                    await self.connector.attach_recording(cred, logged, url)
+            await self._save_call_sync(key, contact, view, pending)
             return ACK
         except Exception as exc:  # noqa: BLE001 - mapped by the connector
             return await self.guards.on_error(exc, msg, cred)
@@ -89,8 +97,7 @@ class Stage2:
     async def _save_call_sync(
         self,
         key: tuple[str, str],
-        ref: ExternalRef | None,
-        contact: EntityRef | None,
+        contact: EntityMap | None,
         view: str,
         recordings: list[str],
     ) -> None:
@@ -102,10 +109,8 @@ class Stage2:
                 "synced_hash": view,
                 "synced_recordings": sorted(set(act.synced_recordings) | set(recordings)),
             }
-            if ref is not None:
-                update["external_ref"] = ref
-            if contact is not None and act.external_contact_ref is None:
-                update["external_contact_ref"] = contact
+            if contact is not None and act.contact is None:
+                update["contact"] = contact
             return act.model_copy(update=update).to_record()
 
         await self.s.repo.upsert(CallActivity.KIND, key, merge)
@@ -121,7 +126,8 @@ class Stage2:
             return ACK
         act_rec = await self.s.repo.get(CallActivity.KIND, (msg.company_id, note.call_id))
         act = CallActivity.from_record(act_rec) if act_rec else None
-        if act is None or act.external_ref is None:
+        call = await self.s.entity_maps.get(msg.company_id, act.activity_key) if act else None
+        if call is None:
             if msg.attempt >= MAX_NOTE_ATTEMPTS:
                 return deadletter("call activity never synced")
             return retry(NOTE_WAIT_SECONDS, "waiting for call activity to sync")
@@ -132,7 +138,8 @@ class Stage2:
         if not await self.guards.lease(lease):
             return retry(2.0, "sync in progress", count_attempt=False)
         try:
-            await self.connector.add_note(cred, act.external_ref, note)
+            note_map = await self.connector.add_note(cred, call, note)
+            await self.s.entity_maps.save(msg.company_id, note_map, dialpad_id=note.activity_key)
             await self.s.repo.upsert(Note.KIND, key, lambda cur: {**cur, "synced": True} if cur else None)
             return ACK
         except Exception as exc:  # noqa: BLE001

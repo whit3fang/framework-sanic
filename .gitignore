@@ -20,4 +20,6 @@ wheels/
 # UI
 node_modules/
 ui/**/dist/
+# `pnpm -C ui build` output: shipped inside the Python wheel, not committed
+src/framework_sanic/ui_dist/
 .local/

@@ -124,9 +124,11 @@ These are framework guarantees, so every feature gets them for free:
   keeping an audit log.
 - **UI:** the session token is kept in memory only, external data is never rendered as raw
   HTML, and only messages from Dialpad's own pages are trusted.
-- **Developer experience:** `scripts/dev.sh` starts the server, the UI and SQLite with demo
-  data. Build gates are backed by tests: contract suites, property tests, black-box HTTP tests
-  and the load test.
+- **Developer experience:** integrations are packages built on a public SDK
+  (`framework_sanic.sdk`). `framework-sanic new` scaffolds one, `framework-sanic dev` runs
+  everything locally with demo data, and `framework-sanic check` is the gate: SDK boundary,
+  plugins, wiring, contract suite, tests. Build gates are backed by tests: contract suites,
+  property tests, black-box HTTP tests and the load test.
 
 ## Tradeoffs and open questions
 

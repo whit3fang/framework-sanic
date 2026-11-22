@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from framework_sanic.core.domain.entities import EntityRef
 from framework_sanic.core.domain.errors import InvalidInput
 from framework_sanic.core.ports.connector import Entity, NewEntity, UiManifest
 
@@ -21,7 +20,6 @@ class ContactQuery(BaseModel):
 class ContactOut(BaseModel):
     dialpad_ref: str
     entity: Entity | None
-    linked: bool
     candidates: list[Entity]
     manifest: UiManifest
 
@@ -36,13 +34,15 @@ class SearchOut(BaseModel):
 
 class RematchIn(BaseModel):
     dialpad_ref: str = Field(min_length=3, max_length=200)
-    entity_ref: EntityRef
+    external_id: str = Field(min_length=1, max_length=200)
+    external_type: str = Field(min_length=1, max_length=100)
     confirm_forward_only: bool = False
 
 
 class RematchOut(BaseModel):
     dialpad_ref: str
-    entity_ref: EntityRef
+    external_id: str
+    external_type: str
     applies_to: str = "future_activities_only"
 
 
@@ -78,8 +78,12 @@ async def rematch_contact(req: RematchIn, ctx: RequestContext) -> RematchOut:
     """Forward-only: affects future activities, never past ones."""
     if not req.confirm_forward_only:
         raise InvalidInput("rematch applies to future activities only; set confirm_forward_only=true")
-    link = await ctx.services.contacts.rematch(ctx.require_principal(), req.dialpad_ref, req.entity_ref)
-    return RematchOut(dialpad_ref=link.dialpad_contact_ref, entity_ref=link.entity_ref)
+    stored = await ctx.services.contacts.rematch(
+        ctx.require_principal(), req.dialpad_ref, req.external_type, req.external_id
+    )
+    return RematchOut(
+        dialpad_ref=stored.dialpad_id, external_id=stored.external_id, external_type=stored.external_type
+    )
 
 
 @route("POST", "/contact", auth="session", status=201)

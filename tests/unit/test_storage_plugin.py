@@ -7,7 +7,7 @@ import pytest
 from framework_sanic.bootstrap import build_services, make_repository, startup
 from framework_sanic.core.domain.errors import ConfigurationError
 from framework_sanic.core.ports.repository import IndexSpec
-from tests.conftest import FakeClock, make_settings
+from framework_sanic.testing import FakeClock, make_settings
 from tests.support.custom_storage import CustomRepository
 
 

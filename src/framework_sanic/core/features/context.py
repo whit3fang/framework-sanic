@@ -16,8 +16,13 @@ import importlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from importlib.metadata import entry_points
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
+from pydantic_settings import BaseSettings
+
+from ..config import load_settings
 from ..domain.entities import Entity
 from ..domain.errors import ConfigurationError
 from ..intake.delivery import EVENT_KINDS, EventHandler, EventKind, event_job
@@ -30,6 +35,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+S = TypeVar("S", bound=BaseSettings)
+
+# Features are discovered by name from this entry-point group: the framework's own (in its
+# pyproject.toml) and every installed integration's. A dotted module path also works (tests).
+FEATURE_ENTRY_POINTS = "framework_sanic.features"
 BUILTIN_FEATURES: dict[str, str] = {
     "platform": "framework_sanic.core.features.platform",
 }
@@ -113,6 +123,10 @@ class FeatureContext:
         """Entity kinds holding company data: deleted on uninstall."""
         self.company_data.extend(entities)
 
+    def settings(self, cls: type[S]) -> S:
+        """This feature's own settings (a ``PluginSettings`` subclass with an env prefix)."""
+        return load_settings(cls, self.services.settings)
+
 
 class FeatureRegistry:
     def __init__(self) -> None:
@@ -163,30 +177,40 @@ class FeatureRegistry:
         return [i for c in self.contexts for i in c.indexes]
 
 
-def resolve_feature_module(name: str) -> str:
-    """``platform`` -> core; ``call_logging`` -> shared feature package;
-    ``hubspot.sms_campaign`` -> connector feature; ``fake.<name>`` -> the fake connector's feature
-    under ``stubs/``; anything else -> a dotted module path."""
+def installed_features() -> list[str]:
+    return sorted(ep.name for ep in entry_points(group=FEATURE_ENTRY_POINTS))
+
+
+def load_feature(name: str) -> Feature:
+    """Resolve a ``FEATURES`` entry: built-in, then entry point, then dotted module path."""
+    target: Any
     if name in BUILTIN_FEATURES:
-        return BUILTIN_FEATURES[name]
-    if name.startswith("framework_sanic") or name.count(".") > 1:
-        return name
-    if "." in name:
-        connector, feature = name.split(".", 1)
-        if connector == "fake":  # the fake connector lives with the other stubs
-            return f"framework_sanic.stubs.connector.features.{feature}"
-        return f"framework_sanic.connectors.{connector}.features.{feature}"
-    return f"framework_sanic.features.{name}"
+        target = importlib.import_module(BUILTIN_FEATURES[name])
+    else:
+        eps = {ep.name: ep for ep in entry_points(group=FEATURE_ENTRY_POINTS)}
+        if name in eps:
+            target = eps[name].load()
+        elif "." in name:
+            try:
+                target = importlib.import_module(name)
+            except ModuleNotFoundError as exc:
+                raise ConfigurationError(
+                    f"unknown feature {name!r}: not an installed feature ({installed_features()}) "
+                    f"or an importable module ({exc})"
+                ) from exc
+        else:
+            raise ConfigurationError(f"unknown feature {name!r}; installed: {installed_features()}")
+    feature = getattr(target, "feature", None) if isinstance(target, ModuleType) else target
+    if feature is None or not callable(getattr(feature, "setup", None)):
+        raise ConfigurationError(f"feature {name!r} does not resolve to an object with setup(ctx)")
+    return feature  # type: ignore[no-any-return]
 
 
 def load_features(services: Services, names: list[str]) -> FeatureRegistry:
     registry = FeatureRegistry()
     ordered = list(PLATFORM_FEATURES) + [n for n in names if n not in PLATFORM_FEATURES]
     for name in ordered:
-        module = importlib.import_module(resolve_feature_module(name))
-        feature: Feature | None = getattr(module, "feature", None)
-        if feature is None:
-            raise ConfigurationError(f"feature module {module.__name__} has no `feature` attribute")
+        feature = load_feature(name)
         ctx = FeatureContext(name=feature.name, services=services)
         feature.setup(ctx)
         registry.contexts.append(ctx)

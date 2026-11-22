@@ -19,7 +19,6 @@ export interface CallbackIn {
 export interface ContactOut {
   dialpad_ref: string;
   entity: Entity | null;
-  linked: boolean;
   candidates: Array<Entity>;
   manifest: UiManifest;
 }
@@ -38,14 +37,10 @@ export interface Empty {
 }
 
 export interface Entity {
-  ref: EntityRef;
+  external_id: string;
+  external_type: string;
   properties?: Record<string, unknown>;
   url?: string | null;
-}
-
-export interface EntityRef {
-  object_type: string;
-  id: string;
 }
 
 export interface ExternalStartIn {
@@ -92,13 +87,15 @@ export interface Queued {
 
 export interface RematchIn {
   dialpad_ref: string;
-  entity_ref: EntityRef;
+  external_id: string;
+  external_type: string;
   confirm_forward_only?: boolean;
 }
 
 export interface RematchOut {
   dialpad_ref: string;
-  entity_ref: EntityRef;
+  external_id: string;
+  external_type: string;
   applies_to?: string;
 }
 

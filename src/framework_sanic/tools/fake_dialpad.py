@@ -4,9 +4,10 @@ Plays Dialpad's role against a running service started with PLATFORM_ADAPTER=fak
 admin OAuth connect, external connect, and signed webhook replay (including duplicated and
 shuffled sequences), then verifies the result landed in the fake connector.
 
-  python tools/fake_dialpad.py e2e --base http://localhost:8000
-  python tools/fake_dialpad.py replay-call --call-id 42 --shuffle --duplicates 3
-  python tools/fake_dialpad.py replay-file events.json --shuffle
+  framework-sanic replay e2e --base http://localhost:8000
+  framework-sanic replay replay-call --call-id 42 --shuffle --duplicates 3
+  framework-sanic replay replay-file events.json --shuffle
+  framework-sanic replay sms --text "hi"
 
 Signing uses the same derivation as the service (HMAC of the company id under
 WEBHOOK_SECRET_KEY), so both must share that env var.
@@ -20,7 +21,6 @@ import hmac
 import json
 import os
 import random
-import sys
 import time
 from typing import Any
 
@@ -145,13 +145,30 @@ class Driver:
             ):
                 if len(matches) != 1:
                     raise SystemExit(f"expected exactly one external record, found {len(matches)}")
-                return matches[0]
+                record: dict[str, Any] = matches[0]
+                return record
             time.sleep(0.5)
         raise SystemExit(f"call {call_id} did not reach the fake connector within {timeout}s")
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
+def sms_event(
+    sms_id: int, *, number: str = "+14155550100", user: str = "c1-u1", text: str = "hello"
+) -> dict[str, Any]:
+    return {
+        "id": sms_id,
+        "created_date": int(time.time() * 1000),
+        "direction": "inbound",
+        "from_number": number,
+        "to_number": ["+14155550199"],
+        "target": {"id": user, "type": "user"},
+        "contact": {"phone": number},
+        "message_status": "sent",
+        "text": text,
+    }
+
+
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(prog="framework-sanic replay")
     p.add_argument("--base", default=os.environ.get("APP_BASE_URL", "http://localhost:8000"))
     sub = p.add_subparsers(dest="cmd", required=True)
     e2e = sub.add_parser("e2e", help="connect, replay a shuffled/duplicated call, verify one external record")
@@ -170,12 +187,16 @@ def main() -> None:
     tk.add_argument("--company", default=COMPANY)
     tk.add_argument("--user", default=ADMIN)
     tk.add_argument("--no-admin", action="store_true")
+    sm = sub.add_parser("sms", help="send one inbound SMS event")
+    sm.add_argument("--company", default=COMPANY)
+    sm.add_argument("--sms-id", type=int, default=int(time.time()))
+    sm.add_argument("--text", default="hello from the fake Dialpad")
     rf = sub.add_parser("replay-file")
     rf.add_argument("path")
     rf.add_argument("--company", default=COMPANY)
     rf.add_argument("--shuffle", action="store_true")
     rf.add_argument("--duplicates", type=int, default=0)
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     if args.cmd == "dev-token":
         print(id_token(args.company, args.user, not args.no_admin))
@@ -220,11 +241,12 @@ def main() -> None:
                 call_sequence(args.call_id), shuffle=args.shuffle, duplicates=args.duplicates, seed=args.seed
             ),
         )
+    elif args.cmd == "sms":
+        d.send(args.company, [sms_event(args.sms_id, text=args.text)])
     elif args.cmd == "replay-file":
         with open(args.path) as fh:
             events = json.load(fh)
         d.send(args.company, mutate(events, shuffle=args.shuffle, duplicates=args.duplicates, seed=None))
-    sys.exit(0)
 
 
 if __name__ == "__main__":

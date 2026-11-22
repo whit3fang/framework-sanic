@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from framework_sanic.core.ports.queue import TOPIC_DEADLETTER, TOPIC_EVENTS
-from tests.conftest import Harness, call_event, sms_event
+from framework_sanic.testing import Harness, call_event, sms_event
 
 
 async def test_accepts_with_cache_and_db_down(harness: Harness) -> None:

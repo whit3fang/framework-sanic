@@ -14,7 +14,7 @@ const error = ref<string | null>(null);
 
 function label(e: Entity): string {
   const p = e.properties ?? {};
-  return String(p.name ?? p.email ?? p.phone ?? e.ref.id);
+  return String(p.name ?? p.email ?? p.phone ?? e.external_id);
 }
 
 async function search() {
@@ -34,7 +34,7 @@ async function confirm() {
   if (!selected.value) return;
   busy.value = true;
   try {
-    await props.api.rematch(props.dialpadRef, selected.value.ref);
+    await props.api.rematch(props.dialpadRef, selected.value);
     emit("done", selected.value);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -51,9 +51,9 @@ async function confirm() {
       <button type="submit" :disabled="busy">Search</button>
     </form>
     <ul>
-      <li v-for="e in results" :key="e.ref.id">
+      <li v-for="e in results" :key="`${e.external_type}:${e.external_id}`">
         <label>
-          <input type="radio" name="match" :value="e.ref.id" @change="selected = e" />
+          <input type="radio" name="match" :value="e.external_id" @change="selected = e" />
           {{ label(e) }}
         </label>
       </li>
