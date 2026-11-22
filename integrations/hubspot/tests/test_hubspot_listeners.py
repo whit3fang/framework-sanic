@@ -10,12 +10,11 @@ from typing import Any
 import pytest
 
 from fake_hubspot_api import FakeHubSpot
-from framework_sanic.sdk import TOPIC_SYNC, NoteIn, OAuthTokens, Principal, QueueMessage
+from framework_sanic.sdk import TOPIC_SYNC, OAuthTokens, Principal, QueueMessage
 from framework_sanic.testing import NOW_MS, Harness, call_event, sms_event, start_harness
 from framework_sanic_hubspot import REFERENCE_PROPERTY, HubSpotConnector
 from framework_sanic_hubspot.activities import LoggedCall, LoggedSms
 from framework_sanic_hubspot.listeners.calls import SYNC_JOB
-from framework_sanic_hubspot.listeners.notes import feature as notes_listener
 
 USER = Principal(company_id="c1", user_id="c1-u1")
 FEATURES = "hubspot.calls,hubspot.sms,hubspot.notes"
@@ -249,35 +248,79 @@ async def test_sms_settings(api: FakeHubSpot) -> None:
 
 
 # --- notes ------------------------------------------------------------------------------------
-async def test_note_waits_for_the_call_then_is_added_once(api: FakeHubSpot) -> None:
-    h = await started(api)
-    note = NoteIn(note_id="note-0001", call_id="1001", body="call back Tuesday")
-    out = await notes_listener.on_note(USER, note)
-    await notes_listener.on_note(USER, note)  # a client retry
-    assert out.synced is False
-    await h.drain()
-    assert api.objects["notes"] == {}  # the call is not logged yet: the note waits
-    await replay_call(h, shuffle=False)
-    await h.drain()
-    await h.queue.publish(  # the note's delayed retry, delivered now
+NOTE = {"note_id": "note-0001", "call_id": "1001", "body": "call back Tuesday"}
+
+
+async def post_note(h: Harness) -> Any:
+    r = await h.request(
+        "POST", "/notes", headers={"X-Dialpad-Id-Token": h.id_token(user_id="c1-u1")}, body=json.dumps(NOTE)
+    )
+    assert r.status == 202
+    return json.loads(r.body)
+
+
+async def deliver_waiting_note(h: Harness, n: int, *, attempt: int = 0) -> None:
+    """The note job's delayed retry, delivered now (the memory queue would wait 30 s)."""
+    await h.queue.publish(
         QueueMessage(
-            message_id="again",
+            message_id=f"note-retry-{n}",
+            attempt=attempt,
             topic=TOPIC_SYNC,
             company_id="c1",
             lane="ui",
             job="hubspot.sync_note",
-            payload={
-                "company_id": "c1",
-                "note_id": "note-0001",
-                "call_id": "1001",
-                "author_user_id": "c1-u1",
-                "body": "call back Tuesday",
-                "created_at": 1.0,
-            },
+            payload={**NOTE, "company_id": "c1", "author_user_id": "c1-u1", "created_at": h.clock.now()},
         )
     )
     await h.drain()
+
+
+async def test_note_waits_for_the_call_then_is_added_once(api: FakeHubSpot) -> None:
+    h = await started(api)
+    assert (await post_note(h))["synced"] is False
+    await post_note(h)  # a client retry: a second job for the same note
+    await h.drain()
+    assert api.objects["notes"] == {}  # the call is not logged yet: the note waits
+    await replay_call(h, shuffle=False)
+    await h.drain()
+    for n in range(3):  # the original job and the retry both run; and once more for good measure
+        await deliver_waiting_note(h, n)
     (note_props,) = api.objects["notes"].values()
     assert note_props["hs_note_body"] == "call back Tuesday"
     (call_oid,) = api.objects["calls"]
     assert any(a[0] == "notes" and a[2:] == ("calls", call_oid) for a in api.associations)
+
+
+async def test_note_outlives_a_long_call(api: FakeHubSpot) -> None:
+    """Notes are written during the call; waiting for a long call must not use up attempts."""
+    h = await started(api)
+    await post_note(h)
+    # A retry already at the worker's last attempt (30): counted, it would be dead-lettered now.
+    await deliver_waiting_note(h, 1, attempt=29)
+    assert not [m for m in h.queue.published if m.topic == "deadletter"]
+    await replay_call(h, shuffle=False)
+    await h.drain()
+    await deliver_waiting_note(h, 3)
+    assert len(api.objects["notes"]) == 1
+
+
+async def test_note_for_a_call_never_logged_gives_up_after_a_day(api: FakeHubSpot) -> None:
+    h = await started(api)
+    await post_note(h)
+    await h.drain()
+    payload = {**NOTE, "company_id": "c1", "author_user_id": "c1-u1", "created_at": h.clock.now()}
+    h.clock.advance(25 * 3600)
+    await h.queue.publish(
+        QueueMessage(
+            message_id="late",
+            topic=TOPIC_SYNC,
+            company_id="c1",
+            lane="ui",
+            job="hubspot.sync_note",
+            payload=payload,
+        )
+    )
+    await h.drain()
+    assert [m.payload["_reason"] for m in h.queue.published if m.topic == "deadletter"] == [
+        "call was never logged"
+    ]

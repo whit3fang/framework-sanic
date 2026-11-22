@@ -12,6 +12,7 @@ Features share credentials and the Repository via ``ctx.services`` and cannot im
 
 from __future__ import annotations
 
+import copy
 import importlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -27,6 +28,7 @@ from ..domain.entities import Entity
 from ..domain.errors import ConfigurationError
 from ..intake.delivery import EVENT_KINDS, EventHandler, EventKind, event_job
 from ..ports.queue import TOPIC_EVENTS
+from ..ports.repository import check_field
 from ..services.crypto import EnvelopeCipher
 from .jobs import JobHandler
 
@@ -117,6 +119,14 @@ class FeatureContext:
         self.config_keys.update(keys)
 
     def declare_index(self, kind: str, *fields: str) -> None:
+        """A query this feature runs: equality fields first, then range/order fields
+        (``"-field"`` = descending). Datastore needs it for queries on two or more fields; SQL
+        builds an index from it."""
+        for f in fields:
+            try:
+                check_field(f.removeprefix("-"))
+            except ValueError as exc:
+                raise ConfigurationError(f"feature {self.name}: declare_index({kind!r}): {exc}") from exc
         self.indexes.append((kind, fields))
 
     def declare_company_data(self, *entities: type[Entity]) -> None:
@@ -210,7 +220,9 @@ def load_features(services: Services, names: list[str]) -> FeatureRegistry:
     registry = FeatureRegistry()
     ordered = list(PLATFORM_FEATURES) + [n for n in names if n not in PLATFORM_FEATURES]
     for name in ordered:
-        feature = load_feature(name)
+        # A copy: setup() stores this instance's services on the feature, and the loaded object is
+        # a module-level singleton shared by every framework instance in the process.
+        feature = copy.copy(load_feature(name))
         ctx = FeatureContext(name=feature.name, services=services)
         feature.setup(ctx)
         registry.contexts.append(ctx)

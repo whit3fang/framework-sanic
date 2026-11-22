@@ -24,15 +24,17 @@ import copy
 import datetime as dt
 import functools
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from types import TracebackType
 from typing import Any, Self, TypeVar
 
 from framework_sanic.core.domain.errors import Conflict
 from framework_sanic.core.domain.records import Key, Record, UpsertResult, key_to_str
 from framework_sanic.core.ports.repository import (
+    Condition,
     MergeFn,
     StorageSchema,
+    check_find,
     check_record,
     classify,
     is_expired,
@@ -53,7 +55,7 @@ def _to_entity(client: Any, kind: str, key: Key, record: Record, version: int, n
     entity["_json"] = json.dumps(record, separators=(",", ":"))
     entity["_v"] = version
     for field, value in record.items():
-        if field.startswith("_"):
+        if field.startswith("_") or field.endswith("_enc"):  # encrypted blobs are never queried
             continue
         if isinstance(value, _SCALARS) and not (isinstance(value, str) and len(value) > _MAX_INDEXED_STR):
             entity[field] = value
@@ -76,7 +78,10 @@ def index_yaml(schema: StorageSchema) -> str:
             continue
         seen.add((spec.kind, spec.fields))
         lines += [f"- kind: {spec.kind}", "  properties:"]
-        lines += [f"  - name: {f}" for f in spec.fields]
+        for f in spec.fields:
+            lines.append(f"  - name: {f.removeprefix('-')}")
+            if f.startswith("-"):
+                lines.append("    direction: desc")
     return "\n".join(lines if len(lines) > 1 else ["indexes: []"]) + "\n"
 
 
@@ -167,6 +172,60 @@ class DatastoreRepository:
                     yield data
             if not cursor or not entities:
                 return
+
+    def _filtered(self, kind: str, where: Sequence[Condition]) -> Any:
+        from google.cloud.datastore.query import PropertyFilter
+
+        q = self._client.query(kind=kind, namespace=self._ns)
+        for name, op, value in where:
+            # Datastore compares values of the same type only, as the find contract requires
+            # (it orders int and float together as numbers).
+            q.add_filter(filter=PropertyFilter(name, "=" if op == "==" else op, value))  # type: ignore[no-untyped-call]
+        return q
+
+    async def find(
+        self,
+        kind: str,
+        *,
+        where: Sequence[Condition] = (),
+        order_by: Sequence[str] = (),
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Record]:
+        """Native query. Needs the composite index from ``ctx.declare_index`` for two or more
+        fields (``framework-sanic export-indexes``). Entities without an order property are
+        skipped by Datastore itself. Expired records not purged yet are dropped after the fetch,
+        so a page can be shorter than ``limit``.
+        VERIFY: range filters on several fields need Firestore-in-Datastore-mode multi-inequality
+        support; on older rules the first order must be the range field."""
+        check_find(where, order_by, limit, offset)
+
+        def run() -> list[Record]:
+            q = self._filtered(kind, where)
+            q.order = list(order_by)  # "-field" is descending, as in our contract
+            now = self._clock.now()
+            out = []
+            for entity in q.fetch(limit=limit, offset=offset):
+                data, _ = _from_entity(entity)
+                if not is_expired(data, now):
+                    out.append(data)
+            return out
+
+        return await self._run(run)
+
+    async def count(self, kind: str, *, where: Sequence[Condition] = ()) -> int:
+        """Native count aggregation. May include expired records that the TTL policy has not
+        deleted yet (Datastore removes them within about a day)."""
+        check_find(where, (), 1, 0)
+
+        def run() -> int:
+            agg = self._client.aggregation_query(self._filtered(kind, where)).count(alias="n")
+            for batch in agg.fetch():
+                for result in batch:
+                    return int(result.value)
+            return 0
+
+        return await self._run(run)
 
     def unit_of_work(self) -> DatastoreUnitOfWork:
         return DatastoreUnitOfWork(self)

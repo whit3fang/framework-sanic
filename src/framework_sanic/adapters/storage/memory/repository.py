@@ -5,18 +5,22 @@ from __future__ import annotations
 import asyncio
 import copy
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from types import TracebackType
 from typing import Any, Self
 
 from framework_sanic.core.domain.errors import ServiceUnavailable
 from framework_sanic.core.domain.records import Key, Record, UpsertResult
 from framework_sanic.core.ports.repository import (
+    Condition,
     MergeFn,
     StorageSchema,
+    check_find,
     check_record,
     classify,
+    find_in,
     is_expired,
+    matches_where,
 )
 from framework_sanic.core.ports.runtime import Clock, SystemClock
 
@@ -75,6 +79,28 @@ class MemoryRepository:
         for rec in snapshot:
             if not is_expired(rec, now) and _matches(rec, filters):
                 yield rec
+
+    def _live(self, kind: str) -> list[tuple[Key, Record]]:
+        now = self._clock.now()
+        return [(k, copy.deepcopy(r)) for k, r in self._data[kind].items() if not is_expired(r, now)]
+
+    async def find(
+        self,
+        kind: str,
+        *,
+        where: Sequence[Condition] = (),
+        order_by: Sequence[str] = (),
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Record]:
+        self._check()
+        check_find(where, order_by, limit, offset)
+        return find_in(self._live(kind), where, order_by, limit, offset)
+
+    async def count(self, kind: str, *, where: Sequence[Condition] = ()) -> int:
+        self._check()
+        check_find(where, (), 1, 0)
+        return sum(1 for _, r in self._live(kind) if matches_where(r, where))
 
     def unit_of_work(self) -> MemoryUnitOfWork:
         return MemoryUnitOfWork(self)

@@ -149,13 +149,6 @@ class NoteIn(BaseModel):
     body: str = Field(min_length=1, max_length=10_000)
     dialpad_ref: str | None = Field(default=None, max_length=200)
 
-    def activity_key(self, company_id: str) -> str:
-        """Stable id of this note (e.g. its ``EntityMap`` dialpad id)."""
-        return f"dialpad:{company_id}:note:{self.note_id}"
-
-    def call_activity_key(self, company_id: str) -> str:
-        return f"dialpad:{company_id}:call:{self.call_id}"
-
 
 class NoteOut(BaseModel):
     note_id: str

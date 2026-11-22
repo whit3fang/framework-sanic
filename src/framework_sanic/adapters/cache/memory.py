@@ -40,6 +40,11 @@ class MemoryCache:
         self._check()
         self._data.pop(key, None)
 
+    async def delete_if(self, key: str, value: bytes) -> None:
+        self._check()
+        if self._live(key) == value:
+            del self._data[key]
+
     async def add(self, key: str, value: bytes, ttl_seconds: float) -> bool:
         self._check()
         if self._live(key) is not None:

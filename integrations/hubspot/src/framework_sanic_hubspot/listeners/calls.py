@@ -120,7 +120,8 @@ class HubSpotCalls(CallListener):
         cred = await self.guards.check(msg, act.owner_user_id)
         if isinstance(cred, JobResult):
             return cred
-        if not await self.guards.lease(act.activity_key):
+        lease = await self.guards.lease(act.activity_key)
+        if lease is None:
             return retry(2.0, "sync in progress", count_attempt=False)
         try:
             contact = act.contact
@@ -150,7 +151,7 @@ class HubSpotCalls(CallListener):
         except Exception as exc:  # noqa: BLE001 - mapped by the connector
             return await self.guards.on_error(exc, msg, cred)
         finally:
-            await self.guards.release(act.activity_key)
+            await self.guards.release(act.activity_key, lease)
 
     async def _save_sync(
         self, key: tuple[str, str], contact: EntityMap | None, view: str, recordings: list[str]

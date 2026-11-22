@@ -51,7 +51,7 @@ async def test_no_features_accepts_but_delivers_nothing() -> None:
     h = await started(FEATURES="")
     r = await h.webhook("c1", call_event())
     assert r.status == 200 and body(r)["deliveries"] == 0
-    assert h.queue.published == []
+    assert not h.queue.published
     await h.connect_company()
     await h.services.reconciler.reconcile("c1")
     assert sub_kinds(h) == Counter()  # nothing handles events -> nothing subscribed

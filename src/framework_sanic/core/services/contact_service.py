@@ -23,6 +23,7 @@ from ..ports.connector import (
     Caller,
     Connector,
     ConnectorCredential,
+    ConnectorError,
     Entity,
     EntityQuery,
     NewEntity,
@@ -30,6 +31,7 @@ from ..ports.connector import (
 from ..ports.runtime import Clock
 from .credential_service import ExternalCredentialService
 from .entity_map_service import EntityMapService
+from .lease import acquire_lease, release_lease
 from .phone import phone_variants, to_e164
 from .session_service import Principal
 
@@ -197,7 +199,16 @@ class ContactService:
         """``resolve_for_activity``, creating a contact for an unknown number if asked to
         (the listener's unknown-caller rule decides)."""
         contact = await self.resolve_for_activity(company_id, cred, dialpad_ref, number)
-        if contact is None and number and create_if_unknown:
+        if contact is not None or not number or not create_if_unknown:
+            return contact
+        # One creator per caller: a call and an SMS from the same new number arrive together.
+        lease = f"lease:contact-create:{company_id}:{stable_hash(dialpad_ref or number, length=20)}"
+        token = await acquire_lease(self.cache, lease, 30)
+        if token is None:
+            raise ConnectorError("transient", "another job is creating this contact")  # retried
+        try:
+            if dialpad_ref and (stored := await self.maps.get(company_id, dialpad_ref)) is not None:
+                return stored  # created by the job that held the lease before us
             created = await self.connector.create_entity(
                 cred, NewEntity(properties={"phone": to_e164(number) or number})
             )
@@ -206,8 +217,9 @@ class ContactService:
                 external_id=created.external_id,
                 external_type=created.external_type,
             )
-            contact = await self.maps.save(company_id, new) if dialpad_ref else new
-        return contact
+            return await self.maps.save(company_id, new) if dialpad_ref else new
+        finally:
+            await release_lease(self.cache, lease, token)
 
 
 def serialize_lookup(result: ContactLookup) -> str:

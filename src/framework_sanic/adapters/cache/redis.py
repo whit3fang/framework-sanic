@@ -38,6 +38,12 @@ return tostring(wait)
 """
 
 
+_DELETE_IF = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+"""
+
+
 class RedisCache:
     def __init__(self, url: str, *, prefix: str = "ifw:", client: Any = None) -> None:
         self._client: Any = client or aioredis.from_url(
@@ -45,6 +51,7 @@ class RedisCache:
         )
         self._prefix = prefix
         self._bucket_script: Any = self._client.register_script(_TOKEN_BUCKET)
+        self._delete_if_script: Any = self._client.register_script(_DELETE_IF)
 
     def _k(self, key: str) -> str:
         return self._prefix + key
@@ -67,6 +74,9 @@ class RedisCache:
 
     async def delete(self, key: str) -> None:
         await self._call(self._client.delete(self._k(key)))
+
+    async def delete_if(self, key: str, value: bytes) -> None:
+        await self._call(self._delete_if_script(keys=[self._k(key)], args=[value]))
 
     async def add(self, key: str, value: bytes, ttl_seconds: float) -> bool:
         return bool(

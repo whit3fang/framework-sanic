@@ -42,7 +42,7 @@ async def test_signature_failures(harness: Harness) -> None:
     tampered = h.sign("c1", call_event())
     head, payload, sig = tampered.split(".")
     assert (await h.request("POST", path, body=f"{head}.{payload}.{sig[::-1]}")).status == 401
-    assert h.queue.published == []
+    assert not h.queue.published
 
 
 async def test_queue_down_returns_5xx_so_dialpad_retries(harness: Harness) -> None:

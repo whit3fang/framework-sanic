@@ -18,13 +18,14 @@ from typing import Literal
 
 from ..domain.entities import Company, Subscription, Target
 from ..domain.records import Lane, Record, stable_hash
-from ..ports.cache import Cache, CacheUnavailable
+from ..ports.cache import Cache
 from ..ports.platform import RemoteSubscription, SubscriptionSpec
 from ..ports.queue import TOPIC_CONTROL, Queue, QueueMessage
 from ..ports.repository import Repository
 from ..ports.runtime import ChangeLogSource, Clock
 from ..ports.security import WebhookVerifier
 from .credential_service import PlatformGateway
+from .lease import acquire_lease, release_lease
 from .target_hierarchy import TargetService
 
 log = logging.getLogger(__name__)
@@ -88,18 +89,6 @@ class SubscriptionReconciler:
         self.clock = clock
         self.config = config
 
-    async def _lease(self, company_id: str) -> bool:
-        try:
-            return await self.cache.add(f"lease:reconcile:{company_id}", b"1", 300)
-        except CacheUnavailable:
-            return True
-
-    async def _release(self, company_id: str) -> None:
-        try:
-            await self.cache.delete(f"lease:reconcile:{company_id}")
-        except CacheUnavailable:
-            pass
-
     def desired(
         self, targets: Iterable[Target], endpoint_id: str
     ) -> dict[tuple[SubKind, str, str], SubscriptionSpec]:
@@ -137,14 +126,16 @@ class SubscriptionReconciler:
         self, company_id: str, *, lane: Lane = Lane.BACKFILL, use_lease: bool = True
     ) -> ReconcileReport:
         report = ReconcileReport()
-        if use_lease and not await self._lease(company_id):
+        key = f"lease:reconcile:{company_id}"
+        token = await acquire_lease(self.cache, key, 300) if use_lease else None
+        if use_lease and token is None:
             log.info("reconcile for %s already running; skipping", company_id)
             return report
         try:
             await self._reconcile(company_id, lane, report)
         finally:
-            if use_lease:
-                await self._release(company_id)
+            if token is not None:
+                await release_lease(self.cache, key, token)
         return report
 
     async def _reconcile(self, company_id: str, lane: Lane, report: ReconcileReport) -> None:

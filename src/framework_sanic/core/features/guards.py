@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING
 
 from ..domain.entities import Company
 from ..domain.errors import NotConnected
-from ..ports.cache import CacheUnavailable
 from ..ports.connector import ConnectorCredential, ConnectorError
 from ..ports.queue import QueueMessage
+from ..services.lease import acquire_lease, release_lease
 from .jobs import JobResult, backoff, deadletter, retry
 
 if TYPE_CHECKING:
@@ -73,17 +73,13 @@ class SyncGuards:
         limited = await self.rate(msg)
         return limited or cred
 
-    async def lease(self, key: str, seconds: float = LEASE_SECONDS) -> bool:
-        try:
-            return await self.s.cache.add(f"lease:sync:{key}", b"1", seconds)
-        except CacheUnavailable:
-            return True
+    async def lease(self, key: str, seconds: float = LEASE_SECONDS) -> str | None:
+        """A token while this job may sync ``key`` (pass it to ``release``), else None."""
+        return await acquire_lease(self.s.cache, f"lease:sync:{key}", seconds)
 
-    async def release(self, key: str) -> None:
-        try:
-            await self.s.cache.delete(f"lease:sync:{key}")
-        except CacheUnavailable:
-            pass
+    async def release(self, key: str, token: str) -> None:
+        """Frees the lease only if it is still this job's (it may have expired and moved on)."""
+        await release_lease(self.s.cache, f"lease:sync:{key}", token)
 
     async def on_error(self, exc: Exception, msg: QueueMessage, cred: ConnectorCredential) -> JobResult:
         err = exc if isinstance(exc, ConnectorError) else self.s.connector.map_error(exc)

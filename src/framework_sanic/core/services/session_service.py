@@ -30,18 +30,27 @@ class Principal(BaseModel):
     is_admin: bool = False
     session_id: str | None = None
     email: str | None = None
+    auth_time: float | None = None  # when the user logged in with a Dialpad id_token
 
 
 class SessionService:
-    def __init__(self, secret: str, ttl_seconds: int, cache: Cache, clock: Clock) -> None:
+    def __init__(
+        self, secret: str, ttl_seconds: int, cache: Cache, clock: Clock, *, max_age_seconds: int = 8 * 3600
+    ) -> None:
         self._secret = secret
         self._ttl = ttl_seconds
+        self._max_age = max_age_seconds
         self._cache = cache
         self._clock = clock
 
     def issue(self, principal: Principal) -> tuple[str, float]:
+        """A new session token. Renewing a session keeps its login time and stops after
+        ``max_age_seconds``: the user must log in with a fresh Dialpad id_token."""
         now = self._clock.now()
-        exp = now + self._ttl
+        auth_time = principal.auth_time if principal.auth_time is not None else now
+        if now - auth_time > self._max_age:
+            raise Unauthorized("session too old; reload to log in with Dialpad again")
+        exp = min(now + self._ttl, auth_time + self._max_age)
         sid = uuid.uuid4().hex
         token = jwt.encode(
             {
@@ -51,6 +60,7 @@ class SessionService:
                 "eml": principal.email,
                 "sid": sid,
                 "iat": int(now),
+                "auth": auth_time,
                 "exp": int(exp),
                 "typ": "ui-session",
             },
@@ -84,6 +94,7 @@ class SessionService:
             is_admin=bool(claims.get("adm")),
             session_id=sid,
             email=claims.get("eml"),
+            auth_time=float(claims.get("auth") or claims.get("iat") or 0.0),
         )
 
     async def revoke(self, session_id: str) -> None:

@@ -16,8 +16,8 @@ from typing import Literal, TypeVar
 from ..domain.entities import DialpadCredential, ExternalCredential
 from ..domain.errors import NotConnected, RateLimited
 from ..domain.records import Lane
-from ..ports.cache import Cache, CacheUnavailable
-from ..ports.connector import ConnectorAuth, ConnectorCredential
+from ..ports.cache import Cache
+from ..ports.connector import ConnectorAuth, ConnectorCredential, ConnectorError
 from ..ports.platform import (
     OAuthTokens,
     ParentPlatform,
@@ -27,19 +27,13 @@ from ..ports.platform import (
 )
 from ..ports.runtime import Clock
 from ..ports.security import TokenStore
+from .lease import acquire_lease, release_lease
 from .rate_limit import RateLimiter
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 REFRESH_MARGIN_SECONDS = 120.0
-
-
-async def _try_lease(cache: Cache, key: str, ttl: float) -> bool:
-    try:
-        return await cache.add(key, b"1", ttl)
-    except CacheUnavailable:
-        return True
 
 
 class DialpadCredentialService:
@@ -81,8 +75,10 @@ class DialpadCredentialService:
         if not tokens.refresh_token:
             raise PlatformAuthError("access token expired and no refresh token")
         lease = f"lease:refresh:dialpad:{cred.company_id}:{cred.credential_id}"
+        token: str | None = None
         for _ in range(10):
-            if await _try_lease(self.cache, lease, 15):
+            token = await acquire_lease(self.cache, lease, 15)
+            if token is not None:
                 break
             await asyncio.sleep(0.2)
             latest = await self._reload(cred)
@@ -97,10 +93,8 @@ class DialpadCredentialService:
             if latest is None:
                 raise PlatformAuthError("credential vanished during refresh")
             return (await self.store.dialpad_tokens(latest)).access_token
-        try:
-            await self.cache.delete(lease)
-        except CacheUnavailable:
-            pass
+        if token is not None:
+            await release_lease(self.cache, lease, token)
         return new.access_token
 
     async def _reload(self, cred: DialpadCredential) -> DialpadCredential | None:
@@ -227,8 +221,10 @@ class ExternalCredentialService:
                 continue
             try:
                 tokens = await self._fresh(cred)
-            except Exception:  # noqa: BLE001 - refresh failure: fall back to next credential
-                log.warning("external credential refresh failed for %s/%s", company_id, cred.scope)
+            except ConnectorError as exc:
+                if exc.kind != "auth":
+                    raise  # transient (network, 5xx, 429): the job retries; the credential stays ok
+                log.warning("external credential rejected for %s/%s; falling back", company_id, cred.scope)
                 await self.mark_bad(cred.company_id, cred.scope, cred.user_id)
                 continue
             return ConnectorCredential(
@@ -241,7 +237,7 @@ class ExternalCredentialService:
         if cred.token_expires_at is None or cred.token_expires_at - REFRESH_MARGIN_SECONDS > self.clock.now():
             return tokens
         lease = f"lease:refresh:ext:{cred.company_id}:{cred.scope}:{cred.user_id}"
-        if not await _try_lease(self.cache, lease, 15):
+        if await acquire_lease(self.cache, lease, 15) is None:
             await asyncio.sleep(0.5)
             latest = await self.store.get_external(cred.company_id, cred.scope, cred.user_id)
             if latest and latest.version != cred.version:

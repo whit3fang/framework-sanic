@@ -83,7 +83,7 @@ class Services:
         external_credentials = ExternalCredentialService(
             token_store, connector.auth, connector.name, cache, clock
         )
-        targets = TargetService(repo)
+        targets = TargetService(repo, cache)
         entity_maps = EntityMapService(repo, clock)
         base = settings.PUBLIC_BASE_URL.rstrip("/")
         reconciler = SubscriptionReconciler(
@@ -120,7 +120,11 @@ class Services:
             gateway=gateway,
             external_credentials=external_credentials,
             sessions=SessionService(
-                settings.SESSION_SECRET.get_secret_value(), settings.SESSION_TTL_SECONDS, cache, clock
+                settings.SESSION_SECRET.get_secret_value(),
+                settings.SESSION_TTL_SECONDS,
+                cache,
+                clock,
+                max_age_seconds=settings.SESSION_MAX_AGE_SECONDS,
             ),
             oauth_states=OAuthStateStore(cache),
             targets=targets,

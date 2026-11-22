@@ -5,11 +5,17 @@ column (insert relies on the primary key, update on ``WHERE version = :old``), w
 PostgreSQL, MySQL and SQLite. SQLite additionally serializes writers in-process because it
 cannot upgrade concurrent read transactions to write transactions.
 
-Indexes: ``kind``, ``company_id`` and ``expires_at`` are real columns. ``setup`` creates the
-``(kind, company_id)`` and ``(kind, expires_at)`` indexes; declared feature indexes are served by
-``(kind, company_id)`` (every framework query is company-scoped or kind-wide) with the remaining
-fields filtered on the JSON document. Declared indexes that do not lead with ``company_id`` are
-logged, since they cannot be served natively by this generic layout.
+Fields: ``kind``, ``company_id`` and ``expires_at`` are real columns; every other field is read
+from the JSON document with a typed expression: ``json_extract(data, '$.f')`` on SQLite (native
+SQL types) and ``data -> 'f'`` on PostgreSQL (``data`` is JSONB there; JSONB compares numbers as
+numbers and strings as strings). Conditions also check the JSON type, so values of different
+types never match (the ``find`` contract).
+
+Indexes: ``setup`` creates ``(kind, company_id)`` and ``(kind, expires_at)``, plus one expression
+index per declared feature index (``ctx.declare_index``), e.g. ``(kind, company_id,
+json_extract(data, '$.status'), json_extract(data, '$.due'))``. Queries build exactly the same
+expressions, so the database uses those indexes for filtering and sorting. Field names are
+checked to be plain identifiers before they reach any SQL.
 """
 
 from __future__ import annotations
@@ -18,13 +24,14 @@ import asyncio
 import contextlib
 import copy
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from types import TracebackType
 from typing import Any, Self
 
 from sqlalchemy import (
     JSON,
     Column,
+    ColumnElement,
     Float,
     Index,
     Integer,
@@ -32,19 +39,32 @@ from sqlalchemy import (
     String,
     Table,
     and_,
+    cast,
     delete,
+    false,
+    func,
     insert,
+    literal,
+    literal_column,
+    or_,
     select,
+    text,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from framework_sanic.core.domain.errors import Conflict
-from framework_sanic.core.domain.records import Key, Record, UpsertResult, key_to_str
+from framework_sanic.core.domain.records import Key, Record, UpsertResult, key_to_str, stable_hash
 from framework_sanic.core.ports.repository import (
+    Condition,
+    IndexSpec,
     MergeFn,
+    Scalar,
     StorageSchema,
+    check_field,
+    check_find,
     check_record,
     classify,
     is_expired,
@@ -58,7 +78,7 @@ records = Table(
     Column("kind", String(64), primary_key=True),
     Column("key", String(512), primary_key=True),
     Column("company_id", String(128), index=True),
-    Column("data", JSON, nullable=False),
+    Column("data", JSON().with_variant(JSONB(), "postgresql"), nullable=False),
     Column("version", Integer, nullable=False),
     Column("expires_at", Float, nullable=True),
     Index("ix_records_kind_company", "kind", "company_id"),
@@ -92,13 +112,103 @@ class SqlAlchemyRepository:
         """Create the table and indexes (idempotent)."""
         async with self._engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
-        for spec in schema.indexes:
-            if spec.fields and spec.fields[0] != "company_id":
-                log.info(
-                    "index %s(%s) is served by (kind) with in-row filtering in the generic SQL layout",
-                    spec.kind,
-                    ", ".join(spec.fields),
-                )
+            for spec in dict.fromkeys(schema.indexes):
+                await conn.execute(text(self._index_ddl(spec)))
+
+    # --- typed field expressions (shared by queries and index DDL, so indexes match) ----------
+    def _field_sql(self, name: str) -> str:
+        check_field(name)
+        if name == "company_id":
+            return "company_id"
+        return f"json_extract(data, '$.{name}')" if self._sqlite else f"(data -> '{name}')"
+
+    def _index_ddl(self, spec: IndexSpec) -> str:
+        parts = ["kind"]
+        for f in spec.fields:
+            name = f.removeprefix("-")
+            parts.append(self._field_sql(name) + (" DESC" if f.startswith("-") else ""))
+        name = f"ix_rec_{stable_hash(spec.kind, spec.fields, length=20)}"
+        return f"CREATE INDEX IF NOT EXISTS {name} ON records ({', '.join(parts)})"
+
+    def _field(self, name: str) -> ColumnElement[Any]:
+        check_field(name)
+        if name == "company_id":
+            return records.c.company_id
+        if self._sqlite:
+            return func.json_extract(records.c.data, literal_column(f"'$.{name}'"))
+        return records.c.data.op("->")(literal_column(f"'{name}'"))
+
+    def _type_is(self, name: str, kinds: tuple[str, ...]) -> ColumnElement[bool]:
+        """The field holds one of ``kinds`` ("str", "num", "bool")."""
+        if name == "company_id":
+            return literal(True) if "str" in kinds else false()
+        if self._sqlite:
+            names = {"str": ("text",), "num": ("integer", "real"), "bool": ("true", "false")}
+            json_type = func.json_type(records.c.data, literal_column(f"'$.{name}'"))
+        else:
+            names = {"str": ("string",), "num": ("number",), "bool": ("boolean",)}
+            json_type = func.jsonb_typeof(self._field(name))
+        return json_type.in_([t for k in kinds for t in names[k]])
+
+    def _value(self, name: str, value: Scalar) -> Any:
+        if name == "company_id" or self._sqlite:
+            return int(value) if isinstance(value, bool) else value  # SQLite stores JSON true as 1
+        import json
+
+        return cast(literal(json.dumps(value)), JSONB)
+
+    def _cond(self, condition: Condition) -> ColumnElement[bool]:
+        name, op, value = condition
+        kind = "bool" if isinstance(value, bool) else "num" if isinstance(value, (int, float)) else "str"
+        expr, rhs = self._field(name), self._value(name, value)
+        compare = {
+            "==": expr == rhs,
+            "<": expr < rhs,
+            "<=": expr <= rhs,
+            ">": expr > rhs,
+            ">=": expr >= rhs,
+        }[op]
+        return and_(self._type_is(name, (kind,)), compare)
+
+    def _live(self, kind: str, where: Sequence[Condition]) -> list[ColumnElement[bool]]:
+        now = self._clock.now()
+        return [
+            records.c.kind == kind,
+            or_(records.c.expires_at.is_(None), records.c.expires_at > now),
+            *(self._cond(c) for c in where),
+        ]
+
+    async def find(
+        self,
+        kind: str,
+        *,
+        where: Sequence[Condition] = (),
+        order_by: Sequence[str] = (),
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Record]:
+        check_find(where, order_by, limit, offset)
+        conds = self._live(kind, where)
+        order: list[Any] = []
+        for o in order_by:
+            name = o.removeprefix("-")
+            conds.append(self._type_is(name, ("str", "num", "bool")))  # no value: left out
+            order.append(self._field(name).desc() if o.startswith("-") else self._field(name).asc())
+        stmt = (
+            select(records.c.data)
+            .where(and_(*conds))
+            .order_by(*order, records.c.key.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        async with self._engine.connect() as conn:
+            return [row[0] for row in (await conn.execute(stmt)).all()]
+
+    async def count(self, kind: str, *, where: Sequence[Condition] = ()) -> int:
+        check_find(where, (), 1, 0)
+        stmt = select(func.count()).select_from(records).where(and_(*self._live(kind, where)))
+        async with self._engine.connect() as conn:
+            return int((await conn.execute(stmt)).scalar_one())
 
     @contextlib.asynccontextmanager
     async def _write(self) -> AsyncIterator[AsyncConnection]:
@@ -235,9 +345,19 @@ class SqlAlchemyRepository:
                     .limit(limit)
                 )
             ).all()
+            removed = 0
             for kind, key in rows:
-                await conn.execute(delete(records).where(and_(records.c.kind == kind, records.c.key == key)))
-            return len(rows)
+                res = await conn.execute(
+                    delete(records).where(
+                        and_(
+                            records.c.kind == kind,
+                            records.c.key == key,
+                            records.c.expires_at <= now,  # unless its expiry was pushed back meanwhile
+                        )
+                    )
+                )
+                removed += res.rowcount
+            return removed
 
     async def close(self) -> None:
         await self._engine.dispose()

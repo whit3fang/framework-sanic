@@ -188,6 +188,53 @@ SDK toolkit: `publish_and_clear` / `run_in_uow` (transactional follow-up jobs) a
 (parking, credentials, rate budgets, leases, error mapping) for jobs calling the connector.
 Features cannot import each other, and core never imports features (both lint-enforced).
 
+### Storing your own data
+
+Define an entity, declare it, and use the repository (`services.repo`). No tables or migrations:
+
+```python
+from typing import ClassVar
+from framework_sanic.sdk import StoredEntity
+
+class FollowUp(StoredEntity):
+    KIND: ClassVar[str] = "AcmeFollowUp"          # prefix kinds with your integration
+    call_id: str
+    status: str = "open"
+    due_at: float | None = None
+    expires_at: float | None = None                # optional: deleted after this time
+
+    def key(self):
+        return (self.company_id, self.call_id)     # deterministic: retries hit the same record
+
+# in configure(ctx):
+ctx.declare_company_data(FollowUp)                         # deleted on uninstall
+ctx.declare_index(FollowUp.KIND, "company_id", "status", "due_at")   # the queries you run
+
+# write (atomic read-modify-write; merge may run again on conflict, keep it pure)
+await repo.upsert(FollowUp.KIND, (cid, call_id), lambda cur: FollowUp(...).to_record())
+
+# ranges, sorting, paging and counting
+page = await repo.find(
+    FollowUp.KIND,
+    where=[("company_id", "==", cid), ("status", "==", "open"), ("due_at", "<", tomorrow)],
+    order_by=["due_at"],            # "-due_at" for newest first; several fields allowed
+    limit=50, offset=0,              # limit 1..1000
+)
+tasks = [FollowUp.from_record(r) for r in page]
+open_count = await repo.count(FollowUp.KIND, where=[("company_id", "==", cid), ("status", "==", "open")])
+```
+
+Rules, identical on every backend (the repository contract suite checks them):
+- operators `==`, `<`, `<=`, `>`, `>=` on top-level `str` / `int` / `float` / `bool` fields; a
+  condition only matches values of its own type (int and float count as numbers), so a missing
+  field or `None` never matches;
+- records without a value for an `order_by` field are left out; ties are ordered by key;
+- `declare_index(kind, equality fields..., range/order fields...)` with `"-field"` for a
+  descending order. On Datastore, a query on two or more fields fails unless its index is
+  declared and deployed (`framework-sanic export-indexes`). On SQL it creates the matching
+  expression index; without it the query still works but scans the kind's rows.
+- `count` on Datastore can include expired records the TTL policy has not deleted yet.
+
 ### Testing
 
 The test kit (`framework_sanic.testing`) gives every integration the same tools the framework uses:
@@ -362,6 +409,7 @@ All settings come from env / `.env` locally and terraform in beta/production
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | used for OAuth redirects and webhook URLs |
 | `WEBHOOK_SECRET_KEY` | dev value | master key for derived per-company webhook secrets |
 | `SESSION_SECRET`, `SESSION_TTL_SECONDS` | dev / `900` | UI session tokens |
+| `SESSION_MAX_AGE_SECONDS` | `28800` | how long after the Dialpad `id_token` login a session can keep renewing itself; then the iframe must log in again |
 | `DIALPAD_RATE_LIMIT_PER_MINUTE` | `1200` | per-company Dialpad API budget (shared by reconciler and UI) |
 | `CONNECTOR_RATE_LIMIT_PER_MINUTE` | `600` | per-company connector budget |
 | `PER_COMPANY_CONCURRENCY`, `WORKER_CONCURRENCY` | `4`, `32` | fairness caps per worker pool |
@@ -382,6 +430,9 @@ contract. Built in: `memory` (tests), `sqlalchemy` (SQLite/PostgreSQL) and `data
    - `unit_of_work()`: a small multi-record transaction (an activity change + its outbox entry)
      that commits atomically, raising `Conflict` on concurrent changes (`run_in_uow` retries).
    - `get`, `delete` and `query(kind, **equality_filters)` over top-level fields.
+   - `find(kind, where=, order_by=, limit=, offset=)` and `count(kind, where=)`: ranges,
+     sorting, paging and counting with the rules in the port docstring. `find_in` and
+     `matches_where` (`core/ports/repository.py`) are the reference behaviour.
    - Expiry: a record whose `expires_at` (epoch seconds) has passed reads as absent.
    - `setup(schema)`: idempotent, called once at startup with every stored kind and the indexes
      features declared (`ctx.declare_index`). Create or verify tables and indexes here.
@@ -419,3 +470,6 @@ contract. Built in: `memory` (tests), `sqlalchemy` (SQLite/PostgreSQL) and `data
 - Activity records a listener stores expire when it sets `expires_at` (HubSpot: `HUBSPOT_CALLS_RETENTION_DAYS` / `HUBSPOT_SMS_RETENTION_DAYS`); `POST /admin/uninstall`
   deletes all company data, including every kind enabled features declared; connects, disconnects, config changes and deletions go to the audit log (kept).
 - CSP `frame-ancestors` restricts embedding to Dialpad origins.
+- With the real Dialpad (`PLATFORM_ADAPTER=dialpad`) the service refuses to start while
+  `DIALPAD_CLIENT_SECRET`, `WEBHOOK_SECRET_KEY`, `SESSION_SECRET` (and `LOCAL_MASTER_KEY` without
+  `KMS_KEY`) still have their public dev defaults.

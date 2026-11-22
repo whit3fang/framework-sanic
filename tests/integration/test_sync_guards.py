@@ -51,8 +51,11 @@ async def test_rate_limit_defers_without_counting() -> None:
 async def test_lease_is_exclusive_until_released() -> None:
     h = await start_harness()
     guards = SyncGuards(h.services)
-    assert await guards.lease("k") and not await guards.lease("k")
-    await guards.release("k")
+    mine = await guards.lease("k")
+    assert mine and await guards.lease("k") is None
+    await guards.release("k", "someone-else")  # not ours: must not free it
+    assert await guards.lease("k") is None
+    await guards.release("k", mine)
     assert await guards.lease("k")
 
 

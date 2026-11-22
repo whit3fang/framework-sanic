@@ -28,6 +28,7 @@ import pytest_asyncio
 
 from framework_sanic.core.domain.records import Record
 from framework_sanic.core.ports.repository import (
+    Condition,
     IndexSpec,
     MergeFn,
     Repository,
@@ -37,10 +38,19 @@ from framework_sanic.core.ports.repository import (
 )
 
 # Every kind the suite writes, so adapters that need the kinds up front (setup, purge) see them.
-KINDS = ("Thing", "Sms", "Other", "Act", "T", "A", "Ctr", "Many", "Outbox")
+KINDS = ("Thing", "Sms", "Other", "Act", "T", "A", "Ctr", "Many", "Outbox", "Task")
 SCHEMA = StorageSchema(
     kinds=KINDS,
-    indexes=(IndexSpec("T", ("company_id", "enabled")), IndexSpec("Outbox", ("created_at",))),
+    indexes=(
+        IndexSpec("T", ("company_id", "enabled")),
+        IndexSpec("Outbox", ("created_at",)),
+        # the queries the find/count tests run (Datastore needs them; SQL builds indexes from them)
+        IndexSpec("Task", ("company_id", "status", "due")),
+        IndexSpec("Task", ("company_id", "-due")),
+        IndexSpec("Task", ("company_id", "status", "-priority", "due")),
+        IndexSpec("Task", ("company_id", "due")),
+        IndexSpec("Task", ("company_id", "name")),
+    ),
 )
 
 
@@ -242,3 +252,105 @@ class RepositoryContract:
         for i in range(620):
             await r.upsert("Many", ("c1", f"{i:04d}"), setter(rec(i=i)))
         assert len([x async for x in r.query("Many", company_id="c1")]) == 620
+
+    # --- find / count: ranges, sorting, paging ----------------------------------------------------
+    async def _tasks(self, r: Repository) -> None:
+        rows = [
+            ("t1", "open", 30.0, 2, "delta"),
+            ("t2", "open", 10.0, 1, "alpha"),
+            ("t3", "done", 20.0, 2, "charlie"),
+            ("t4", "open", 20.0, 2, "bravo"),
+            ("t5", "open", None, 3, "echo"),  # no due date
+        ]
+        for tid, status, due, priority, name in rows:
+            await r.upsert(
+                "Task",
+                ("c1", tid),
+                setter(rec(tid=tid, status=status, due=due, priority=priority, name=name)),
+            )
+        await r.upsert("Task", ("c2", "x"), setter(rec(company_id="c2", tid="x", status="open", due=1.0)))
+
+    async def test_find_range_and_order(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        got = await r.find(
+            "Task",
+            where=[("company_id", "==", "c1"), ("status", "==", "open"), ("due", ">=", 15.0)],
+            order_by=["due"],
+        )
+        assert [x["tid"] for x in got] == ["t4", "t1"]
+        got = await r.find("Task", where=[("company_id", "==", "c1"), ("due", "<", 30)], order_by=["due"])
+        assert [x["tid"] for x in got] == ["t2", "t3", "t4"]  # ints compare with floats; ties by key
+
+    async def test_find_descending_skips_missing_values(
+        self, contract: tuple[Repository, ContractClock]
+    ) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        got = await r.find("Task", where=[("company_id", "==", "c1")], order_by=["-due"])
+        assert [x["tid"] for x in got] == ["t1", "t3", "t4", "t2"]  # t5 has no due date: left out
+
+    async def test_find_multiple_orders(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        got = await r.find(
+            "Task",
+            where=[("company_id", "==", "c1"), ("status", "==", "open")],
+            order_by=["-priority", "due"],
+        )
+        assert [x["tid"] for x in got] == ["t4", "t1", "t2"]  # t5 has no due date: left out
+
+    async def test_find_string_range_and_paging(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        where: list[Condition] = [("company_id", "==", "c1"), ("name", ">", "b")]
+        assert [x["name"] for x in await r.find("Task", where=where, order_by=["name"])] == [
+            "bravo",
+            "charlie",
+            "delta",
+            "echo",
+        ]
+        page = await r.find("Task", where=where, order_by=["name"], limit=2, offset=1)
+        assert [x["name"] for x in page] == ["charlie", "delta"]
+
+    async def test_find_types_do_not_mix(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        assert (
+            await r.find("Task", where=[("company_id", "==", "c1"), ("due", ">", "0")]) == []
+        )  # str vs numbers
+        assert (
+            await r.find("Task", where=[("company_id", "==", "c1"), ("name", ">", 0)]) == []
+        )  # number vs str
+
+    async def test_find_hides_expired(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, clock = contract
+        await r.upsert("Task", ("c1", "old"), setter(rec(tid="old", due=5.0, expires_at=clock.now() + 10)))
+        clock.advance(20)
+        assert (
+            await r.find("Task", where=[("company_id", "==", "c1"), ("due", ">=", 0)], order_by=["due"]) == []
+        )
+
+    async def test_count(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        await self._tasks(r)
+        assert await r.count("Task", where=[("company_id", "==", "c1")]) == 5
+        assert (
+            await r.count(
+                "Task", where=[("company_id", "==", "c1"), ("status", "==", "open"), ("due", ">=", 15)]
+            )
+            == 2
+        )
+        assert await r.count("Task", where=[("company_id", "==", "nope")]) == 0
+
+    async def test_find_rejects_bad_input(self, contract: tuple[Repository, ContractClock]) -> None:
+        r, _ = contract
+        for kwargs in (
+            {"where": [("due; drop", "==", 1)]},
+            {"where": [("due", "!=", 1)]},
+            {"order_by": ["-bad name"]},
+            {"limit": 0},
+            {"limit": 100_000},
+        ):
+            with pytest.raises(ValueError):
+                await r.find("Task", **kwargs)

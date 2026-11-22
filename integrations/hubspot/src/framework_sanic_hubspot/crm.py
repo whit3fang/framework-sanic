@@ -88,4 +88,7 @@ class CrmClient:
     async def create_property(
         self, cred: ConnectorCredential, object_type: str, definition: dict[str, Any]
     ) -> None:
-        await self.rest.post(cred, f"/crm/v3/properties/{object_type}", json=definition)
+        resp = await self.rest.send(cred, "POST", f"/crm/v3/properties/{object_type}", json=definition)
+        if resp.status_code == 409:  # created meanwhile by another worker: that is what we wanted
+            return
+        resp.raise_for_status()

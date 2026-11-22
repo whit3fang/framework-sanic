@@ -29,6 +29,9 @@ class QueueMessage(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     attempt: int = 0
     enqueued_at: float = 0.0
+    # Unix time before which the message must not be handled. Set by queues that cannot delay a
+    # redelivery natively (Pub/Sub): they republish a copy and hold it back until then.
+    not_before: float | None = None
 
 
 @dataclass

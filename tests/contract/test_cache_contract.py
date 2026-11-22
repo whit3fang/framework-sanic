@@ -45,6 +45,15 @@ async def test_add_is_set_if_absent(cache: Cache) -> None:
     assert await cache.get("lease") == b"1"
 
 
+async def test_delete_if_only_deletes_the_holders_value(cache: Cache) -> None:
+    await cache.add("lease", b"mine", 10)
+    await cache.delete_if("lease", b"someone-else")
+    assert await cache.get("lease") == b"mine"
+    await cache.delete_if("lease", b"mine")
+    assert await cache.get("lease") is None
+    await cache.delete_if("missing", b"x")  # no error
+
+
 async def test_token_bucket(cache: Cache) -> None:
     granted = [await cache.take_tokens("b", capacity=5, refill_per_second=1) for _ in range(5)]
     assert granted == [0.0] * 5

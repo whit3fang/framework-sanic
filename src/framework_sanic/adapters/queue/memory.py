@@ -76,7 +76,8 @@ class MemoryQueue:
         self._seq = itertools.count()
         self._event = asyncio.Event()
         self.down = False
-        self.published: list[QueueMessage] = []  # observability for tests
+        # Recent messages, for tests and the dev harness; bounded so a long dev session does not grow.
+        self.published: deque[QueueMessage] = deque(maxlen=10_000)
 
     def _shard(self, topic: str, shard: int) -> _Shard:
         return self._shards.setdefault((topic, shard), _Shard())

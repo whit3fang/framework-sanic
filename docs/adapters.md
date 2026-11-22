@@ -112,6 +112,11 @@ it's down.
 - **`SubscriptionReconciler`:** per-company reconcile lease.
 - **`ContactService`:** short-lived contact lookup cache.
 - **`SyncGuards`:** per-activity sync leases.
+- **`TargetService`:** per-company lease so logging-config recomputes run one at a time.
+- **`ContactService`:** per-caller lease while creating a contact for an unknown number.
+
+Leases (`core/services/lease.py`) store a random token per holder and are released with
+`delete_if`, so a holder whose lease expired never frees the one someone else took after it.
 - **`/readyz`.**
 
 ## Key management: KeyProvider (`KMS_KEY`)

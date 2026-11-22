@@ -26,8 +26,8 @@ from ..activities import CallNote
 from ..connector import HubSpotConnector
 
 SYNC_JOB = "hubspot.sync_note"
-WAIT_SECONDS = 30.0  # for the call to be logged
-MAX_ATTEMPTS = 60
+WAIT_SECONDS = 30.0  # between checks for the call to be logged
+MAX_WAIT_SECONDS = 24 * 3600.0  # notes are often written during the call, which can be long
 
 
 class HubSpotNotes(NoteListener):
@@ -63,15 +63,20 @@ class HubSpotNotes(NoteListener):
 
     async def sync_note(self, msg: QueueMessage) -> JobResult:
         note = CallNote.model_validate(msg.payload)
-        call = await self.services.entity_maps.get(msg.company_id, note.call_activity_key)
+        maps = self.services.entity_maps
+        if await maps.get(msg.company_id, note.activity_key) is not None:
+            return ACK  # already added (a repeated request; HubSpot search may not show it yet)
+        call = await maps.get(msg.company_id, note.call_activity_key)
         if call is None:
-            if msg.attempt >= MAX_ATTEMPTS:
+            if self.services.clock.now() - note.created_at > MAX_WAIT_SECONDS:
                 return deadletter("call was never logged")
-            return retry(WAIT_SECONDS, "waiting for the call to be logged")
+            # Waiting is not a failure: it must not use up the job's attempts.
+            return retry(WAIT_SECONDS, "waiting for the call to be logged", count_attempt=False)
         cred = await self.guards.check(msg, note.author_user_id)
         if isinstance(cred, JobResult):
             return cred
-        if not await self.guards.lease(note.activity_key):
+        lease = await self.guards.lease(note.activity_key)
+        if lease is None:
             return retry(2.0, "sync in progress", count_attempt=False)
         try:
             note_map = await self.connector.add_note(cred, call, note)
@@ -80,7 +85,7 @@ class HubSpotNotes(NoteListener):
         except Exception as exc:  # noqa: BLE001
             return await self.guards.on_error(exc, msg, cred)
         finally:
-            await self.guards.release(note.activity_key)
+            await self.guards.release(note.activity_key, lease)
 
 
 feature = HubSpotNotes()

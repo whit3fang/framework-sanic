@@ -1,8 +1,14 @@
 """Google Cloud Pub/Sub Queue adapter (production). Requires the ``gcp`` extra.
 
 One topic + subscription per (topic, lane, shard): ``{prefix}-{topic}-{lane}-{shard}``. Pulls
-drain higher lanes first. Delayed redelivery uses ``modify_ack_deadline`` (max 600 s); attempts
-come from ``delivery_attempt`` (requires a dead-letter policy on the subscription).
+drain higher lanes first.
+
+Pub/Sub's own ``delivery_attempt`` counts every redelivery (and only exists with a dead-letter
+policy), so it cannot tell a failure from a "not yet" deferral. Attempts therefore travel in the
+message: a counted retry publishes a copy with ``attempt + 1`` and ``not_before`` and acks the
+original; a pulled message whose ``not_before`` is in the future is held back with
+``modify_ack_deadline`` (max 600 s per step, so any delay works). An uncounted short deferral
+just uses ``modify_ack_deadline``.
 Autoscaling should use the Cloud Monitoring metric ``subscription/oldest_unacked_message_age``.
 """
 
@@ -10,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -89,11 +97,14 @@ class PubSubQueue:
                 sub = self._sub_path(topic, lane, shard)
                 request = {"subscription": sub, "max_messages": max_messages - len(out)}
                 resp = await asyncio.to_thread(self._subscriber.pull, request=request, timeout=5.0)
+                now = time.time()
                 for rm in resp.received_messages:
                     msg = QueueMessage.model_validate(json.loads(rm.message.data))
-                    if getattr(rm, "delivery_attempt", 0):
-                        msg = msg.model_copy(update={"attempt": max(msg.attempt, rm.delivery_attempt - 1)})
-                    out.append(Delivery(message=msg, shard=shard, ack_id=f"{sub}|{rm.ack_id}"))
+                    ack_id = f"{sub}|{rm.ack_id}"
+                    if msg.not_before is not None and msg.not_before > now:
+                        await self._hide(ack_id, msg.not_before - now)  # a delayed retry: not yet
+                        continue
+                    out.append(Delivery(message=msg, shard=shard, ack_id=ack_id))
         return out
 
     async def ack(self, delivery: Delivery) -> None:
@@ -103,13 +114,26 @@ class PubSubQueue:
         )
 
     async def nack(self, delivery: Delivery, delay_seconds: float, *, count_attempt: bool = True) -> None:
-        sub, ack_id = delivery.ack_id.split("|", 1)
-        if delay_seconds > MAX_ACK_DEADLINE:
-            # Longer delays: republish later is not supported natively; cap at the max deadline.
-            delay_seconds = MAX_ACK_DEADLINE
+        if not count_attempt and delay_seconds <= MAX_ACK_DEADLINE:
+            await self._hide(delivery.ack_id, delay_seconds)  # same message, same attempt
+            return
+        msg = delivery.message
+        retry = msg.model_copy(
+            update={
+                "attempt": msg.attempt + 1 if count_attempt else msg.attempt,
+                "not_before": time.time() + delay_seconds,
+            }
+        )
+        await self.publish(retry)  # before the ack: a crash in between duplicates, never loses
+        await self.ack(delivery)
+
+    async def _hide(self, ack_id_full: str, seconds: float) -> None:
+        """Redeliver after ``seconds`` (rounded up, so a sub-second wait never spins at 0)."""
+        sub, ack_id = ack_id_full.split("|", 1)
+        deadline = min(MAX_ACK_DEADLINE, math.ceil(max(0.0, seconds)))
         await asyncio.to_thread(
             lambda: self._subscriber.modify_ack_deadline(
-                request={"subscription": sub, "ack_ids": [ack_id], "ack_deadline_seconds": int(delay_seconds)}
+                request={"subscription": sub, "ack_ids": [ack_id], "ack_deadline_seconds": deadline}
             )
         )
 

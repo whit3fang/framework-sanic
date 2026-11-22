@@ -30,6 +30,16 @@ class Settings(BaseSettings):
         self._env_file_used = values.get("_env_file", self.model_config.get("env_file"))
         self._explicit = {k: v for k, v in values.items() if not k.startswith("_")}
 
+    def insecure_defaults(self) -> list[str]:
+        """Secrets still at their public dev default. Allowed only with the fake Dialpad."""
+        if self.PLATFORM_ADAPTER == "fake":
+            return []
+        names = ["DIALPAD_CLIENT_SECRET", "WEBHOOK_SECRET_KEY", "SESSION_SECRET"]
+        if not self.KMS_KEY:  # the local key provider uses LOCAL_MASTER_KEY
+            names.append("LOCAL_MASTER_KEY")
+        fields = type(self).model_fields
+        return [n for n in names if getattr(self, n) == fields[n].default]
+
     # --- Dialpad ---------------------------------------------------------------------------
     DIALPAD_CLIENT_ID: str = "dev-client-id"
     DIALPAD_CLIENT_SECRET: SecretStr = SecretStr("dev-client-secret-change-me-0123456789")
@@ -76,6 +86,9 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET_KEY: SecretStr = SecretStr("dev-webhook-master-key")
     SESSION_SECRET: SecretStr = SecretStr("dev-session-secret-change-me-32bytes")
     SESSION_TTL_SECONDS: int = 900
+    # A session can be renewed with itself only this long after the Dialpad id_token login; then
+    # the iframe must present a new id_token, so removed users and lost admin rights take effect.
+    SESSION_MAX_AGE_SECONDS: int = 8 * 3600
     EMBEDDED_WORKERS: bool = True
     WORKER_CONCURRENCY: int = 32
     PER_COMPANY_CONCURRENCY: int = 4

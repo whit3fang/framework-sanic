@@ -83,18 +83,15 @@ class RepositoryTokenStore:
             update["status"] = "ok"
         if status is not None:
             update["status"] = status
-        won = False
 
         def merge(cur: Record | None) -> Record | None:
-            nonlocal won
             if cur is None or int(cur.get("version", 0)) != cred.version:
-                return None
-            won = True
+                return cur  # someone else changed it: write nothing
             existing = DialpadCredential.from_record(cur)
             return existing.model_copy(update={**update, "version": cred.version + 1}).to_record()
 
-        await self._repo.upsert(DialpadCredential.KIND, cred.key(), merge)
-        if not won:
+        # The result, not a flag set inside merge: storage may rerun merge after a write conflict.
+        if await self._repo.upsert(DialpadCredential.KIND, cred.key(), merge) != "updated":
             return None
         rec = await self._repo.get(DialpadCredential.KIND, cred.key())
         return DialpadCredential.from_record(rec) if rec else None
@@ -163,17 +160,14 @@ class RepositoryTokenStore:
             update["status"] = "ok"
         if status is not None:
             update["status"] = status
-        won = False
 
         def merge(cur: Record | None) -> Record | None:
-            nonlocal won
             if cur is None or int(cur.get("version", 0)) != cred.version:
-                return None
-            won = True
+                return cur  # someone else changed it: write nothing
             existing = ExternalCredential.from_record(cur)
             return existing.model_copy(update={**update, "version": cred.version + 1}).to_record()
 
-        await self._repo.upsert(ExternalCredential.KIND, cred.key(), merge)
-        if not won:
+        # The result, not a flag set inside merge: storage may rerun merge after a write conflict.
+        if await self._repo.upsert(ExternalCredential.KIND, cred.key(), merge) != "updated":
             return None
         return await self.get_external(cred.company_id, cred.scope, cred.user_id)

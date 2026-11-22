@@ -190,6 +190,11 @@ def make_connector(settings: Settings) -> Connector:
 
 def build_services(settings: Settings | None = None, **overrides: Any) -> Services:
     settings = settings or Settings()
+    if insecure := settings.insecure_defaults():
+        raise ConfigurationError(
+            f"{', '.join(insecure)} still use the public dev defaults; set real secrets "
+            "(only PLATFORM_ADAPTER=fake may run with them)"
+        )
     clock = overrides.pop("clock", None) or SystemClock()
     repo = overrides.pop("repo", None) or make_repository(settings, clock)
     cache = overrides.pop("cache", None) or make_cache(settings)

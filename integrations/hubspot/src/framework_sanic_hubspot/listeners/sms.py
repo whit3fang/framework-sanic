@@ -104,7 +104,8 @@ class HubSpotSms(SmsListener):
                 text = await decrypt_sms_text(s.cipher, msg.company_id, sms_id, msg.payload["text_enc"])
             except Exception:  # noqa: BLE001
                 return deadletter("cannot decrypt SMS text")
-        if not await self.guards.lease(act.activity_key):
+        lease = await self.guards.lease(act.activity_key)
+        if lease is None:
             return retry(2.0, "sync in progress", count_attempt=False)
         try:
             contact = act.contact or await s.contacts.resolve_or_create(
@@ -132,7 +133,7 @@ class HubSpotSms(SmsListener):
         except Exception as exc:  # noqa: BLE001
             return await self.guards.on_error(exc, msg, cred)
         finally:
-            await self.guards.release(act.activity_key)
+            await self.guards.release(act.activity_key, lease)
 
 
 feature = HubSpotSms()

@@ -7,13 +7,16 @@ configuration or the hierarchy changes.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from typing import Any
 
 from ..domain.entities import Target
 from ..domain.records import Key, Record
+from ..ports.cache import Cache
 from ..ports.platform import TargetInfo
 from ..ports.repository import MergeFn, Repository
+from .lease import acquire_lease, release_lease
 
 TKey = tuple[str, str]  # (target_type, target_id)
 
@@ -47,9 +50,13 @@ def _set_field(name: str, value: Any) -> MergeFn:
     return merge
 
 
+RECOMPUTE_LEASE_SECONDS = 60.0
+
+
 class TargetService:
-    def __init__(self, repo: Repository) -> None:
+    def __init__(self, repo: Repository, cache: Cache | None = None) -> None:
         self.repo = repo
+        self.cache = cache
 
     async def all(self, company_id: str, *, include_deleted: bool = False) -> list[Target]:
         out = [Target.from_record(r) async for r in self.repo.query(Target.KIND, company_id=company_id)]
@@ -120,7 +127,26 @@ class TargetService:
         return result
 
     async def recompute(self, company_id: str) -> int:
-        """Recompute ``effective_enabled`` for the whole company; returns the number of changed targets."""
+        """Recompute ``effective_enabled`` for the whole company; returns the number of changed targets.
+
+        One at a time per company: a recompute that read the targets before an admin's change must
+        not write its stale result after the recompute that follows that change. Each writer calls
+        this after its write, so the last recompute always sees every write."""
+        if self.cache is None:
+            return await self._recompute(company_id)
+        key = f"lease:targets:{company_id}"
+        for _ in range(int(RECOMPUTE_LEASE_SECONDS / 0.05)):
+            token = await acquire_lease(self.cache, key, RECOMPUTE_LEASE_SECONDS)
+            if token is not None:
+                break
+            await asyncio.sleep(0.05)
+        try:
+            return await self._recompute(company_id)
+        finally:
+            if token is not None:
+                await release_lease(self.cache, key, token)
+
+    async def _recompute(self, company_id: str) -> int:
         targets = await self.all(company_id, include_deleted=True)
         effective = compute_effective(t for t in targets if not t.deleted)
         changed = 0

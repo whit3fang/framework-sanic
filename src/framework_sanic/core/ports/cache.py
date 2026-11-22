@@ -25,6 +25,10 @@ class Cache(Protocol):
         """Set if absent. Returns True if the key was set (lease acquired / first seen)."""
         ...
 
+    async def delete_if(self, key: str, value: bytes) -> None:
+        """Delete ``key`` only while it still holds ``value`` (atomic; releases a lease)."""
+        ...
+
     async def take_tokens(
         self,
         key: str,

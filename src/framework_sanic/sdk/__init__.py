@@ -55,7 +55,7 @@ from framework_sanic.core.ports.connector import (
 )
 from framework_sanic.core.ports.platform import OAuthTokens
 from framework_sanic.core.ports.queue import TOPIC_CONTROL, TOPIC_EVENTS, TOPIC_SYNC, QueueMessage
-from framework_sanic.core.ports.repository import UnitOfWork, run_in_uow
+from framework_sanic.core.ports.repository import MAX_FIND, Condition, Repository, UnitOfWork, run_in_uow
 from framework_sanic.core.services.matching import match_by_phone
 from framework_sanic.core.services.outbox import publish_and_clear
 from framework_sanic.core.services.phone import phone_variants, to_e164
@@ -100,6 +100,9 @@ __all__ = [
     "StoredEntity",
     "SyncGuards",
     "UnitOfWork",
+    "Repository",
+    "Condition",
+    "MAX_FIND",
     "backoff",
     "deadletter",
     "decrypt_sms_text",

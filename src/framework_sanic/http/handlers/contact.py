@@ -11,9 +11,13 @@ from framework_sanic.core.ports.connector import Entity, NewEntity, UiManifest
 
 from ..routes import RequestContext, route
 
+# Only caller ids: logged activities are mapped under keys like "dialpad:c1:call:1001", which a
+# user must never be able to point elsewhere.
+CALLER_REF = r"^(contact|phone):[^:]{1,190}$"
+
 
 class ContactQuery(BaseModel):
-    dialpad_ref: str = Field(min_length=3, max_length=200)
+    dialpad_ref: str = Field(pattern=CALLER_REF, max_length=200)
     phone: str | None = Field(default=None, max_length=40)
 
 
@@ -33,7 +37,7 @@ class SearchOut(BaseModel):
 
 
 class RematchIn(BaseModel):
-    dialpad_ref: str = Field(min_length=3, max_length=200)
+    dialpad_ref: str = Field(pattern=CALLER_REF, max_length=200)
     external_id: str = Field(min_length=1, max_length=200)
     external_type: str = Field(min_length=1, max_length=100)
     confirm_forward_only: bool = False
@@ -47,7 +51,7 @@ class RematchOut(BaseModel):
 
 
 class CreateContactIn(BaseModel):
-    dialpad_ref: str = Field(min_length=3, max_length=200)
+    dialpad_ref: str = Field(pattern=CALLER_REF, max_length=200)
     properties: dict[str, Any]
 
     @field_validator("properties")
